@@ -1,0 +1,69 @@
+package de.nereide.strohhalm.domain
+
+import org.eclipse.jgit.api.errors.TransportException
+import org.eclipse.jgit.errors.NoRemoteRepositoryException
+import org.eclipse.jgit.transport.URIish
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+
+class SyncErrorsTest {
+
+    @Test
+    fun `a rejected key maps to AUTH_FAILED`() {
+        val e = TransportException("git@host:repo.git: Auth fail")
+        assertEquals(SyncErrorCode.AUTH_FAILED, SyncErrors.fromException(e).code)
+    }
+
+    @Test
+    fun `permission denied also maps to AUTH_FAILED`() {
+        val e = TransportException("ssh://host/repo: Permission denied (publickey)")
+        assertEquals(SyncErrorCode.AUTH_FAILED, SyncErrors.fromException(e).code)
+    }
+
+    @Test
+    fun `a host key mismatch keeps both fingerprints in the detail`() {
+        val e = HostKeyMismatchException(stored = "SHA256:aaa", presented = "SHA256:bbb")
+        val mapped = SyncErrors.fromException(e)
+
+        assertEquals(SyncErrorCode.HOST_KEY_MISMATCH, mapped.code)
+        assertEquals("expected SHA256:aaa, got SHA256:bbb", mapped.detail)
+    }
+
+    @Test
+    fun `an unresolvable host maps to HOST_UNREACHABLE`() {
+        assertEquals(
+            SyncErrorCode.HOST_UNREACHABLE,
+            SyncErrors.fromException(UnknownHostException("nope.invalid")).code
+        )
+    }
+
+    @Test
+    fun `a timeout maps to HOST_UNREACHABLE`() {
+        assertEquals(
+            SyncErrorCode.HOST_UNREACHABLE,
+            SyncErrors.fromException(SocketTimeoutException("timed out")).code
+        )
+    }
+
+    @Test
+    fun `a missing remote repository maps to REMOTE_ERROR`() {
+        val e = NoRemoteRepositoryException(URIish("ssh://host/gone.git"), "not found")
+        assertEquals(SyncErrorCode.REMOTE_ERROR, SyncErrors.fromException(e).code)
+    }
+
+    @Test
+    fun `a wrapped cause is unwrapped before matching`() {
+        val e = RuntimeException("outer", TransportException("Auth fail"))
+        assertEquals(SyncErrorCode.AUTH_FAILED, SyncErrors.fromException(e).code)
+    }
+
+    @Test
+    fun `an unrecognised failure maps to UNKNOWN but keeps the message`() {
+        val mapped = SyncErrors.fromException(IOException("disk went sideways"))
+        assertEquals(SyncErrorCode.UNKNOWN, mapped.code)
+        assertEquals("disk went sideways", mapped.detail)
+    }
+}

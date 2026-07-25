@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0B5FFF</color>
+    <color name="ic_launcher_foreground">#FFFFFF</color>
+
+    <color name="stromschnelle_primary">#0B5FFF</color>
+    <color name="stromschnelle_on_primary">#FFFFFF</color>
+    <color name="stromschnelle_secondary">#00B0A6</color>
+</resources>

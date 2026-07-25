@@ -1,0 +1,23 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*/build/
+
+# Kotlin
+.kotlin/
+
+# Signing secrets (never commit)
+keystore.properties
+app/keystore.properties
+*.jks
+*.keystore
+
+# Superpowers brainstorming companion (local mockups)
+.superpowers/
