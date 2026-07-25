@@ -64,11 +64,30 @@ These hold for every task. Violating one is a defect even if tests pass.
 
 ## Commands
 
+**Every Gradle invocation must set `JAVA_HOME`.** This machine's default JDK is
+Java 25, and Gradle 8.9's embedded Kotlin DSL compiler cannot parse that version
+string — a bare `./gradlew` dies with `java.lang.IllegalArgumentException: 25.0.2`
+at `JavaVersion.parse` *before any task runs*. A Kotlin `jvmToolchain` does not
+help: the failure happens while compiling the build script itself, before
+toolchain resolution.
+
 ```bash
-./gradlew assembleDebug                  # build
-./gradlew :app:testDebugUnitTest         # JVM unit tests — fast, no device
-./gradlew connectedDebugAndroidTest      # instrumented — needs a device/emulator
-./gradlew installDebug                   # install on a connected device
+export JAVA_HOME=/usr/lib/jvm/java-17-temurin-jdk
+
+./gradlew assembleDebug                    # build
+./gradlew :app:testDebugUnitTest           # JVM unit tests — fast, no device
+./gradlew :app:testDebugUnitTest --rerun   # force re-run; see caveat below
+./gradlew connectedDebugAndroidTest        # instrumented — needs a device/emulator
+./gradlew installDebug                     # install on a connected device
+```
+
+**`UP-TO-DATE` is not evidence.** Gradle skips a test task whose inputs are
+unchanged, so a green `BUILD SUCCESSFUL` can mean nothing ran. To actually verify,
+pass `--rerun` and read the per-class counts:
+
+```bash
+grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' \
+  app/build/test-results/testDebugUnitTest/TEST-*.xml
 ```
 
 If Gradle cannot find the SDK, create `local.properties` with
@@ -90,6 +109,13 @@ If Gradle cannot find the SDK, create `local.properties` with
 - **Two tasks cannot be automated.** Task 2 (the JGit/SSHD spike) needs a physical device
   and a real git remote whose `authorized_keys` you can edit. Task 13's periodic-sync
   verification needs a device. Do not fake these or mark them done.
+
+- **Parallel agents cannot share this repo's build directory.** Kotlin compiles the whole
+  test source set at once, so one agent's not-yet-implemented test breaks *everyone's*
+  `compileDebugUnitTestKotlin`; and concurrent `testDebugUnitTest` runs clobber each
+  other's `app/build/test-results`, producing `NoSuchFileException: …/output.bin.idx`.
+  If work is parallelised, either give each agent its own worktree, or have agents write
+  files only and let a single final stage build, test and commit.
 
 ---
 
