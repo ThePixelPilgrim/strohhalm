@@ -54,6 +54,15 @@ android {
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
+
+                // v1 (JAR signing) is only needed below API 24; minSdk is 26.
+                // v3 carries the proof-of-rotation lineage and is the ONLY
+                // mechanism by which an Android signing key can ever be
+                // rotated — without it, a compromised key means abandoning the
+                // applicationId and every installed user.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
