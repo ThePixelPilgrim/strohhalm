@@ -9,9 +9,13 @@ Keeps offline mirror copies of remote git repositories on an Android device.
 > not yet sync anything.** The SSH transport, the git mirror engine, persistence
 > and the entire user interface are not implemented.
 >
-> There is no release, and no APK. A real release will follow once the app
-> actually works end to end. Until then, treat everything below as a description
-> of intent rather than of behaviour.
+> **`v0.1.0` is a pre-release that does nothing.** It launches to a placeholder
+> screen. It exists to validate the build, signing and distribution path
+> (Obtainium) end to end *before* there is anything worth distributing — not to
+> be used. Do not install it expecting an app.
+>
+> A real release will follow once the app works end to end. Until then, treat
+> everything below as a description of intent rather than of behaviour.
 >
 > **Current state**
 >
