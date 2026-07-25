@@ -9,4 +9,38 @@
     <string name="ok">OK</string>
     <string name="back">Back</string>
     <string name="close">Close</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">Set up Strohhalm</string>
+    <string name="onboarding_intro">Strohhalm keeps offline mirror copies of your git repositories. Three things are needed before it can start.</string>
+    <string name="onboarding_storage_title">1. All files access</string>
+    <string name="onboarding_storage_body">Mirrors are stored as real git repositories in a folder you choose, so they survive uninstalling the app and can be copied to a computer. Android only allows that with all-files access, which has to be granted by hand in system settings.</string>
+    <string name="onboarding_storage_action">Grant access</string>
+    <string name="onboarding_folder_title">2. Backup folder</string>
+    <string name="onboarding_folder_body">Pick or create a folder for the mirrors. Android does not allow choosing the top level of internal storage, so create a folder such as "Strohhalm".</string>
+    <string name="onboarding_folder_action">Choose folder</string>
+    <string name="onboarding_notifications_title">3. Notifications</string>
+    <string name="onboarding_notifications_body">Strohhalm stays quiet while backups succeed and only notifies you when one cannot run.</string>
+    <string name="onboarding_notifications_action">Allow notifications</string>
+    <string name="onboarding_done">Done</string>
+    <string name="onboarding_granted">Granted</string>
+
+    <!-- Storage path probe -->
+    <string name="probe_title">Path check</string>
+    <string name="probe_body">Strohhalm wrote a small file to the folder you chose, recording where it believes it wrote it. Find this file on your device or computer and confirm it is really at this path.</string>
+    <string name="probe_copy">Copy file contents</string>
+    <string name="probe_failed">The folder could not be written to: %1$s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_folder_title">Backup folder</string>
+    <string name="settings_folder_change">Change folder</string>
+    <string name="settings_key_title">Public key</string>
+    <string name="settings_key_body">Add this line to the server\'s authorized_keys, or as a read-only deploy key, so Strohhalm may read the repositories.</string>
+    <string name="settings_key_copy">Copy public key</string>
+    <string name="settings_key_copied">Public key copied</string>
+    <string name="settings_key_regenerate">Regenerate key</string>
+    <string name="settings_key_regenerate_title">Regenerate the key?</string>
+    <string name="settings_key_regenerate_body">A new key is generated and the current one stops working immediately. Every server has to be updated with the new public key before backups resume.</string>
+    <string name="settings_notify_title">Notify when a backup fails</string>
 </resources>

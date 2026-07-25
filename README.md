@@ -9,26 +9,43 @@ Keeps offline mirror copies of remote git repositories on an Android device.
 > not yet sync anything.** The SSH transport, the git mirror engine, persistence
 > and the entire user interface are not implemented.
 >
-> **`v0.1.0` is a pre-release that does nothing.** It launches to a placeholder
-> screen. It exists to validate the build, signing and distribution path
-> (Obtainium) end to end *before* there is anything worth distributing — not to
-> be used. Do not install it expecting an app.
+> **`v0.1.1` cannot back anything up yet.** It has onboarding, generates its SSH
+> key and lets you copy the public key — but there is no git engine behind it, so
+> no repository can be added or mirrored.
 >
-> A real release will follow once the app works end to end. Until then, treat
-> everything below as a description of intent rather than of behaviour.
+> It exists to validate on real hardware the parts that unit tests cannot reach:
+> the all-files-access grant, the folder picker's path derivation, and AES-GCM
+> under the Android Keystore. Until the mirror engine lands, treat the rest of
+> this document as a description of intent rather than behaviour.
 >
 > **Current state**
 >
-> | Done | Not yet |
+> | Working | Not yet |
 > | --- | --- |
-> | Project scaffold, build, theme | Git mirror engine (JGit) |
-> | Ed25519 public-key encoding | SSH key storage and encryption |
-> | Host key trust policy (TOFU) | Room persistence, settings |
-> | Error taxonomy, sync preconditions | Background sync worker |
-> | Slug, interval and storage-path logic | All screens |
+> | Onboarding, permissions, folder picker | Git mirror engine (JGit) |
+> | Ed25519 key generation, encrypted at rest | Repository list, add, detail |
+> | Public key display and copy | Room persistence |
+> | Storage path probe | Background sync worker |
+> | Host key trust policy, error taxonomy | Sync interval setting |
 >
-> 52 unit tests currently pass. The next blocker is a hardware spike that pins
-> the JGit/MINA SSHD behaviour against a real server.
+> 65 unit tests pass. The next blocker is a hardware spike pinning JGit/MINA SSHD
+> behaviour against a real server.
+>
+> ### The path probe
+>
+> When you choose a backup folder, Strohhalm writes `strohhalm-path-probe.txt`
+> into it, recording the path it *believes* it wrote to plus a random nonce.
+>
+> This exists because deriving a real filesystem path from the Android folder
+> picker is an educated guess: the picker returns an opaque document id such as
+> `primary:Strohhalm`, and mapping that to `/storage/emulated/0/Strohhalm` relies
+> on undocumented behaviour. A plain write test would pass even if the guess
+> resolved to a *different* real, writable directory. Locating the file yourself
+> and comparing it against the recorded path is what actually proves the mapping
+> — and confirms the folder is reachable from outside the app, which is the whole
+> reason all-files access is requested.
+>
+> The file is safe to delete.
 
 ---
 
