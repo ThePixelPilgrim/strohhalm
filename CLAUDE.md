@@ -121,6 +121,27 @@ If Gradle cannot find the SDK, create `local.properties` with
 
 ## Current state
 
-Spec and plan are written and approved. Implementation follows the 13 tasks in the plan,
-in order. Task 2 gates everything that touches JGit: it pins the dependency versions and
-confirms the `ServerKeyDatabase` API shape the mirror engine depends on.
+Spec and plan are written and approved. Implementation follows the 13 tasks in the plan.
+Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation, path probe).
+
+Task 2 gates everything that touches JGit: it pins the dependency versions and confirms
+the `ServerKeyDatabase` API shape the mirror engine depends on.
+
+### Verified on real hardware
+
+Do not re-litigate these; they were confirmed on device, not just by unit tests.
+
+- **`MANAGE_EXTERNAL_STORAGE` grant flow** works via
+  `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`.
+- **SAF document-id → real path derivation works for the `primary` volume.** Confirmed
+  by `StorageProbe`: the marker file was found on the filesystem at exactly the path the
+  app recorded. This is the undocumented mapping the whole storage design rests on.
+- **The chosen folder is writable, persists writes, and is reachable from outside the
+  app** — the property that makes mirrors recoverable after an uninstall.
+
+### NOT verified on hardware
+
+- **The removable-volume branch of `StorageRootResolver`** (`StorageVolume.uuid` lookup,
+  API 30+). Only the `primary` branch has been exercised. Keep `StorageProbe` — it is how
+  this gets checked if anyone points Strohhalm at an SD card.
+- **Everything JGit/SSH.** No connection to a real server has ever been made.
