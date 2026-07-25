@@ -138,6 +138,11 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
   app recorded. This is the undocumented mapping the whole storage design rests on.
 - **The chosen folder is writable, persists writes, and is reachable from outside the
   app** — the property that makes mirrors recoverable after an uninstall.
+- **`KeystoreCipher` + `EncryptedSshKeyStore` work on device.** An Ed25519 key generates,
+  the seed encrypts under an AndroidKeyStore AES-GCM key, persists, and reads back — the
+  public key renders, copies to the clipboard, and regeneration produces a working new
+  key. Confirmed on hardware, not merely by the instrumented tests (which have still
+  never been run).
 
 ### NOT verified on hardware
 
