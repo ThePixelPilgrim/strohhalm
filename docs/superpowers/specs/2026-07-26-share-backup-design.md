@@ -114,7 +114,16 @@ interface MirrorArchiver {
     fun archive(gitDir: File, target: File, progress: ArchiveProgress?): ArchiveResult
 }
 data class ArchiveResult(val sha256: String, val bytes: Long, val entries: Int)
+
+/** Mirrors `MirrorProgress`, so the same progress bar renders both. */
+fun interface ArchiveProgress {
+    fun update(task: String, completed: Int, total: Int)
+}
 ```
+
+`MirrorArchiver` returns the archive's checksum but does not write the sidecar;
+`ArchiveStore` owns that file, because it is the only component that knows the
+ref fingerprint belonging in it.
 
 Streams the directory into `target`. Two properties matter:
 
@@ -167,7 +176,7 @@ cached archive are different and independent:
 
 ```
 # refs 4f2a91c07b3e59d0a8c1e77b0f3d2a6c9e5b18f4c07a3e2d1b6f8095c4a7d3e21
-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  yamiro-4f2a91c07b3e.zip
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  yamiro-2026-07-26-4f2a91c07b3e.zip
 ```
 
 - The **archive checksum** answers *is this file intact?* It is verified before
@@ -197,11 +206,21 @@ receiver would collide on one file; here they cannot, by construction.
 `share(repo)` resolves to a ready file by:
 
 1. Computing the current ref fingerprint.
-2. If `<slug>-<fp12>.zip` exists **and** its SHA-256 matches the sidecar,
-   returning it unchanged.
-3. Otherwise: deleting this repo's other archives, building to
-   `<name>.zip.part`, flushing to disk, hashing, writing the sidecar, then
-   **renaming atomically** into place.
+2. Globbing `<slug>-*-<fp12>.zip` for a candidate, then accepting it only if
+   **all three** hold: its sidecar exists, the sidecar's full ref fingerprint
+   equals the current one, and the archive's bytes hash to the sidecar's archive
+   checksum. The full-fingerprint comparison is what makes the twelve-character
+   filename safe to use as an index — a truncated match narrows the search, it
+   does not decide.
+3. Otherwise building to `<name>.zip.part`, flushing to disk, hashing, writing
+   the sidecar, then **renaming atomically** into place. The superseded archive
+   is removed under the same rules as any other prune (below), not by a separate
+   blanket delete — a rebuild is trigger 1, "the refs moved", and it does not
+   get to ignore an in-flight share.
+
+The archive contains exactly one top-level directory, `<slug>.git`, holding the
+bare repository. So `unzip` followed by `git clone yamiro.git` restores it,
+which is the same recovery story the mirror folder already offers.
 
 The `.part` name plus the rename is what makes "abort and start again" safe: an
 incomplete archive never holds the final name, so a cancelled build cannot be
@@ -219,10 +238,18 @@ An archive is deleted actively on exactly two triggers, and never speculatively:
    longer matches the mirror's current one. That mismatch *is* the definition of
    stale — the archive describes a state the mirror has left — and it is the
    only evidence needed to delete it.
-2. **Android asks for space back.** `onTrimMemory` at its severe levels is a
-   request to release cached resources, and an archive is the most releasable
-   thing this app holds: fully regenerable from the mirror, at the cost of
-   rebuilding it.
+2. **Android asks for space back.** `onTrimMemory` at `TRIM_MEMORY_COMPLETE`
+   — the level meaning the process is a prime candidate to be killed — and
+   `onLowMemory`. Lesser levels are ignored: they fire routinely as the app
+   backgrounds, and discarding an archive on every backgrounding would defeat
+   reuse entirely.
+
+   This trigger removes **current** archives too, not only stale ones. An
+   archive is the most releasable thing this app holds — fully regenerable from
+   the mirror, at the cost of rebuilding it — and when the system says it needs
+   memory back, keeping a convenience cache is not a defensible use of it. The
+   in-flight exception below still applies: not even this deletes a file another
+   app is reading.
 
 Waiting until the next share to notice staleness would leave a superseded
 archive in the cache indefinitely — for a repository synced every 15 minutes and
@@ -287,6 +314,7 @@ and once waiting:
 | Event | Behaviour |
 | --- | --- |
 | Sync succeeds | Proceeds automatically to archiving, with progress and Stop |
+| Stop, while archiving | The build is abandoned, the `.part` file deleted, and the screen returns to its ordinary state. The share is not pending afterwards — Stop means stop, not pause |
 | Sync **fails** | Stops waiting, shows the error, offers **Retry sync** and — only if there is something to share — **Share anyway** |
 | Sync **cancelled** | Stops waiting, says the sync was stopped rather than failed, same actions |
 | Back | Share abandoned. Nothing is built; the sync is untouched and keeps running |
@@ -343,6 +371,12 @@ clean: a corrupt backup that looks verified is worse than no backup.
   `FLAG_GRANT_READ_URI_PERMISSION`.
 - All new user-facing text goes in `res/values/strings.xml`, per the project
   rule.
+- The action is a share icon in the detail screen's top bar, beside the existing
+  Sync now and Delete icons, since it belongs to the same family of per-repo
+  actions.
+- The unencrypted-content warning sits with the Share action itself — one line,
+  visible before the share sheet opens — because that is the last moment at
+  which the user can still decide not to send it.
 
 **The name the recipient sees is not the name on disk.** `FileProvider` reports
 the on-disk filename as `DISPLAY_NAME`, which would send every backup out
@@ -371,6 +405,18 @@ Free space is checked **before** building, against the repo row's `sizeBytes`.
 This is the direct lesson of the unmounted-card failure: a storage problem must
 be reported as a storage problem, up front, not as whatever happens to throw
 first two minutes later.
+
+The check uses `StorageManager.getAllocatableBytes` rather than
+`File.getUsableSpace`, and asks for the space with `allocateBytes` before
+building. Both exist from API 26, which is `minSdk`. The difference matters:
+`getUsableSpace` reports only what is free *now*, while `getAllocatableBytes`
+reports what the system could make available by clearing other apps' caches,
+and `allocateBytes` actually causes that clearing. Using the plain figure would
+refuse builds the device could comfortably do.
+
+The archive is close to the mirror's own size, since pack files — nearly all of
+the bytes — are stored rather than re-deflated. The required figure is therefore
+`sizeBytes` plus a margin for zip overhead and the text files.
 
 ## Testing
 
