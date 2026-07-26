@@ -138,10 +138,29 @@ Owns `cacheDir/archives/`. For a repository whose slug is `yamiro` and whose
 ref fingerprint begins `4f2a91c07b3e`, the three filenames are:
 
 ```
-yamiro-4f2a91c07b3e.zip           the archive
-yamiro-4f2a91c07b3e.zip.sha256    the sidecar
-yamiro-4f2a91c07b3e.zip.part      the build in progress, never offered
+yamiro-2026-07-26-4f2a91c07b3e.zip           the archive
+yamiro-2026-07-26-4f2a91c07b3e.zip.sha256    the sidecar
+yamiro-2026-07-26-4f2a91c07b3e.zip.part      the build in progress, never offered
 ```
+
+The date is `Repo.lastSyncAt` at the moment of building, in ISO `yyyy-MM-dd`
+form so names sort chronologically. It says *when this copy was taken*, which is
+the question a backup's filename should answer.
+
+**The date is descriptive and takes no part in the cache key.** Lookup globs
+`yamiro-*-<fp12>.zip` and matches on the fingerprint alone. That is not a
+detail: `lastSyncAt` advances on every successful sync, including the very
+common one where nothing moved upstream, so a date in the key would rebuild an
+identical archive daily. Ignoring it means an unchanged repository keeps its
+archive — and keeps the older date in the name, which is honest, because that is
+when the content was captured.
+
+A commit-derived date was considered and rejected. It would need an object
+reader — index lookup, inflate, delta-chain resolution, annotated-tag
+indirection, commit-header parsing — and would end the engine's guarantee that
+it never interprets object content, which is the property that made a
+hash-agnostic engine tractable. `lastSyncAt` is free, already stored, and for a
+backup arguably the more useful of the two dates.
 
 The sidecar carries **both** checksums, because the two questions asked of a
 cached archive are different and independent:
@@ -155,7 +174,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  yamiro-4f2a91c
   the archive is offered to a share sheet, which is the whole basis for reusing
   a build instead of repeating it.
 - The **ref fingerprint** answers *is this file current?* It is the full
-  digest, not the truncated infix, and it is what a prune decision compares
+  digest, not the truncated suffix, and it is what a prune decision compares
   against.
 
 Written in that order the file remains valid input to `sha256sum -c`, which
@@ -164,11 +183,16 @@ receiving end, not only by Strohhalm. (Verified against GNU coreutils; the
 behaviour of Android's own toybox `sha256sum` has not been checked and nothing
 in the app depends on it.)
 
-The filename infix is the first 12 characters of the same fingerprint. It is a
-**lookup hint only** — it makes finding a candidate a file-existence check
-rather than a directory scan. Every actual decision reads the sidecar, so a
-renamed or truncated filename can never make a stale archive look current. If
-the infix and the sidecar disagree, the archive is treated as stale.
+The filename suffix is the first 12 characters of the same fingerprint. It is a
+**lookup hint only** — enough to pick a candidate out of a directory holding a
+handful of files, which is cheaper than parsing every sidecar to find one.
+Every actual decision reads the sidecar, so a renamed or truncated filename can
+never make a stale archive look current. If the suffix and the sidecar disagree,
+the archive is treated as stale.
+
+Distinct filenames per ref state also mean a rebuild writes to a path no
+in-flight share is reading. With a single stable name, rebuilding and a slow
+receiver would collide on one file; here they cannot, by construction.
 
 `share(repo)` resolves to a ready file by:
 
@@ -320,6 +344,17 @@ clean: a corrupt backup that looks verified is worse than no backup.
 - All new user-facing text goes in `res/values/strings.xml`, per the project
   rule.
 
+**The name the recipient sees is not the name on disk.** `FileProvider` reports
+the on-disk filename as `DISPLAY_NAME`, which would send every backup out
+carrying a twelve-character hash. A subclass overriding `query()` reports
+`yamiro-2026-07-26.zip` instead, while the file keeps its fingerprint suffix
+locally.
+
+That keeps both properties rather than trading one away: the recipient gets a
+filename that says what the archive is and when it was taken, and the cache
+keeps the distinct-name collision safety that protects an in-flight share from
+a concurrent rebuild.
+
 ## Error handling
 
 `SyncErrorCode` is reused unchanged, so the existing string mapping keeps
@@ -353,8 +388,12 @@ JVM unit tests for everything except the share sheet.
 - **The sidecar** — round-trips both checksums; a file whose recorded ref
   fingerprint differs from the mirror's is stale; one whose archive checksum
   does not match the bytes on disk is rejected before any share; an archive with
-  no sidecar at all, or whose sidecar disagrees with its filename infix, is
+  no sidecar at all, or whose sidecar disagrees with its filename suffix, is
   treated as stale rather than trusted.
+- **Naming** — the date comes from `lastSyncAt` and the suffix from the
+  fingerprint; and, the case that motivates the rule, a successful sync that
+  moves **no** refs reuses the existing archive rather than rebuilding it under
+  a new date.
 - **Pruning** — a changed ref list removes the superseded archive and its
   sidecar; an unchanged one removes nothing; a severe trim removes archives that
   are current too, since they are regenerable; the archive most recently handed
@@ -417,7 +456,8 @@ Each step is a task with its own test cycle, in TDD order.
    `onTrimMemory`, application-scoped, off the sync's critical path, respecting
    the in-flight share and the grace period.
 5. Free-space precheck and `SyncError` mapping.
-6. `FileProvider`, manifest entry, `file_paths.xml`, `ACTION_SEND`.
+6. `FileProvider` with a display-name override, manifest entry,
+   `file_paths.xml`, `ACTION_SEND`.
 7. `RepoDetailViewModel` — the share state machine: waiting, archiving, the
    failure branch with Retry sync and Share anyway, and Back from each.
 8. `RepoDetailScreen` — Share action, waiting UI, the failure actions, progress
