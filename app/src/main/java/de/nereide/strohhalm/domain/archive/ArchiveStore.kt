@@ -102,19 +102,22 @@ class ArchiveStore(
 
         inFlight.add(part.name)
         val result = try {
-            archiver.archive(gitDir, part, progress)
-        } catch (t: Throwable) {
-            part.delete()
-            throw t
+            val built = try {
+                archiver.archive(gitDir, part, progress)
+            } catch (t: Throwable) {
+                part.delete()
+                throw t
+            }
+            // Inside the guard, not after it: between a finished pack and its
+            // rename the part file is complete but still nobody's, and a prune
+            // landing there deletes minutes of work and fails the rename.
+            if (!part.renameTo(archive)) {
+                part.delete()
+                throw java.io.IOException("could not finalise $archive")
+            }
+            built
         } finally {
-            // Both ways out: on the throw the part is already gone, and on
-            // success the rename below is what removes it.
             inFlight.remove(part.name)
-        }
-
-        if (!part.renameTo(archive)) {
-            part.delete()
-            throw java.io.IOException("could not finalise $archive")
         }
         File(root, ArchiveNames.sidecar(name)).writeText(
             Sidecar(fingerprint, result.sha256, name).render()

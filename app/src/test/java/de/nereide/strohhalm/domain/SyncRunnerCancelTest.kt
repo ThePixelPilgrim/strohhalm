@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeout
@@ -17,6 +18,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * A sync that cannot be stopped is a sync the user must force-quit the app to
@@ -133,5 +135,67 @@ class SyncRunnerCancelTest {
         guarded.launchSyncOne(id)
         withTimeout(TimeUnit.SECONDS.toMillis(10)) { guarded.running.first { !it } }
         assertEquals("the lock must be released, not leaked", 1, syncCalls.get())
+    }
+
+    /**
+     * `running` going false is the signal every caller waits on, so the lock has
+     * to be free *before* that is visible — not merely soon afterwards.
+     *
+     * The collector runs `Unconfined` deliberately: it resumes inside the
+     * emission, on the emitting thread, which is exactly where a caller reacting
+     * to `running` lands. Release the lock after clearing the flag and this
+     * observes the window; release it before and there is no window to observe.
+     */
+    @Test
+    fun `the mirror lock is free by the time the runner reports it is idle`() = runBlocking {
+        val access = MirrorAccess()
+        val id = repos.add("Notes", "ssh://git@host/srv/notes.git", "SHA256:aaa")
+        val guarded = SyncRunner(repos, countingMirror, scope, NoForegroundHold, access)
+
+        val lockFreeWhenIdle = AtomicReference<Boolean?>(null)
+        var wasRunning = false
+        val watcher = launch(Dispatchers.Unconfined) {
+            guarded.running.collect { isRunning ->
+                if (isRunning) {
+                    wasRunning = true
+                } else if (wasRunning && lockFreeWhenIdle.get() == null) {
+                    val free = access.tryAcquire(MirrorAccess.Owner.ARCHIVE)
+                    lockFreeWhenIdle.set(free)
+                    if (free) access.release(MirrorAccess.Owner.ARCHIVE)
+                }
+            }
+        }
+
+        guarded.launchSyncOne(id)
+        withTimeout(TimeUnit.SECONDS.toMillis(10)) { guarded.running.first { !it } }
+        watcher.cancel()
+
+        assertEquals(
+            "an archive starting the moment the sync went idle would have been refused",
+            true,
+            lockFreeWhenIdle.get(),
+        )
+    }
+
+    /**
+     * A dropped launch has to be *reported* dropped. The caller decides what it
+     * means — `RepoDetailViewModel.retrySync` moves the share to Waiting only if
+     * a sync is genuinely in flight, and would otherwise wait for one that is
+     * never coming.
+     */
+    @Test
+    fun `launching says whether a sync actually started`() = runBlocking {
+        val access = MirrorAccess()
+        val id = repos.add("Notes", "ssh://git@host/srv/notes.git", "SHA256:aaa")
+        val guarded = SyncRunner(repos, countingMirror, scope, NoForegroundHold, access)
+
+        assertTrue(access.tryAcquire(MirrorAccess.Owner.ARCHIVE))
+        assertFalse("an archive holds the mirror", guarded.launchSyncOne(id))
+        assertFalse("and so does a sync all", guarded.launchSyncAll())
+
+        access.release(MirrorAccess.Owner.ARCHIVE)
+        assertTrue("nothing is in the way now", guarded.launchSyncOne(id))
+        withTimeout(TimeUnit.SECONDS.toMillis(10)) { guarded.running.first { !it } }
+        assertEquals(1, syncCalls.get())
     }
 }

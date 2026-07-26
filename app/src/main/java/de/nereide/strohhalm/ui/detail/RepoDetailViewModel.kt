@@ -90,8 +90,13 @@ class RepoDetailViewModel(
 
     fun retrySync() {
         if (repo.value == null) return
+        // Only wait for a sync that exists. The launch is refused while an
+        // archive holds the mirror, and moving to Waiting on the strength of the
+        // tap alone would leave the card waiting for a completion that never
+        // arrives — `running` never rises, so the collector never fires.
+        val started = syncRunner.launchSyncOne(id)
+        if (!started && !syncRunner.running.value) return
         _shareState.value = ShareRules.onRetry()
-        syncRunner.launchSyncOne(id)
     }
 
     /** Back, or Stop while packing. Stop means stop, not pause. */
@@ -102,7 +107,10 @@ class RepoDetailViewModel(
         // back as "Packing…", stuck there for good behind a dead job.
         progressGate.cancel()
         packJob?.cancel()
-        packJob = null
+        // Deliberately *not* cleared. A cancelled pack holds the mirror lock
+        // until its own `finally` has run, and `pack` joins whatever is in here
+        // before acquiring. Null it and the next Share loses the acquire to the
+        // pack this call just stopped, then waits for a sync that is not coming.
         _shareState.value = ShareState.Idle
     }
 

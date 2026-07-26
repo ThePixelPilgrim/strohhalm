@@ -62,23 +62,31 @@ class SyncRunner(
 
     private var job: Job? = null
 
-    /** Ignored while a sync is already in flight — two clones into one directory would collide. */
-    fun launchSyncOne(id: Long) = launch {
+    /**
+     * Ignored while a sync is already in flight — two clones into one directory
+     * would collide — or while an archive holds the mirror.
+     *
+     * @return whether a sync actually started. A caller that changes its own
+     *   state on the strength of the launch has to know: `false` means nothing
+     *   is coming, and waiting for it would wait for ever.
+     */
+    fun launchSyncOne(id: Long): Boolean = launch {
         repos.all().firstOrNull { it.id == id }?.let { sync(it) }
     }
 
-    fun launchSyncAll() = launch {
+    /** @return whether a sync actually started; see [launchSyncOne]. */
+    fun launchSyncAll(): Boolean = launch {
         repos.all().forEach { sync(it) }
     }
 
-    private fun launch(block: suspend () -> Unit) {
-        if (_running.value) return
+    private fun launch(block: suspend () -> Unit): Boolean {
+        if (_running.value) return false
         // `_running` only knows about other syncs. An archive is reading the
         // same directories and is invisible here, so the mirror lock is the
         // only thing that can hold a fetch back — and it must, because a fetch
         // mid-archive writes a temporary pack into the mirror and rewrites its
         // refs, producing an archive that verifies and does not restore.
-        if (!access.tryAcquire(MirrorAccess.Owner.SYNC)) return
+        if (!access.tryAcquire(MirrorAccess.Owner.SYNC)) return false
         _running.value = true
         // Acquired before the work starts and released only when it ends:
         // Android freezes cached processes, and a mirror of a large repository
@@ -88,12 +96,18 @@ class SyncRunner(
             try {
                 block()
             } finally {
-                _running.value = false
                 _progress.value = null
                 foreground.release()
                 access.release(MirrorAccess.Owner.SYNC)
+                // Last, and the order is the point: `running` going false is the
+                // signal every caller waits on, so the mirror must already be
+                // free when they see it. Clearing the flag first leaves a window
+                // in which a share or a queued sync asks for a lock this sync
+                // has not let go of yet, and is silently refused.
+                _running.value = false
             }
         }
+        return true
     }
 
     /**
