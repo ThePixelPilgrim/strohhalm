@@ -20,9 +20,9 @@ class MirrorRepository(val gitDir: File) {
     fun objectsDir(): File = File(gitDir, "objects")
 
     fun initialise(hash: ObjectHash) {
-        File(gitDir, "objects/pack").mkdirs()
-        File(gitDir, "refs/heads").mkdirs()
-        File(gitDir, "refs/tags").mkdirs()
+        createDirectory(File(gitDir, "objects/pack"))
+        createDirectory(File(gitDir, "refs/heads"))
+        createDirectory(File(gitDir, "refs/tags"))
         File(gitDir, "HEAD").writeText("ref: refs/heads/main\n")
 
         // Format version 1 plus an extension is how git marks a non-SHA-1
@@ -38,6 +38,29 @@ class MirrorRepository(val gitDir: File) {
             }
         }
         File(gitDir, "config").writeText(config)
+    }
+
+    /**
+     * `mkdirs` reports failure by returning `false`, and discarding that return
+     * is how a storage problem gets misreported as a missing file.
+     *
+     * On device this produced `.../yamiro.git/HEAD: open failed: ENOENT` — an
+     * error naming HEAD, which was never the thing that failed. The directory
+     * could not be created; HEAD was merely the first write to notice. Same
+     * shape as the `remote hung up unexpectedly` and `Short read of block` traps
+     * already recorded for this project: the message describes the symptom at
+     * the bottom layer and hides the cause above it.
+     *
+     * The `isDirectory` re-check after a false return is not redundant: a
+     * concurrent creator makes `mkdirs` fail on a directory that now exists.
+     */
+    private fun createDirectory(dir: File) {
+        if (dir.isDirectory) return
+        if (!dir.mkdirs() && !dir.isDirectory) {
+            throw IOException(
+                "could not create $dir — the backup folder is missing, full or not writable"
+            )
+        }
     }
 
     fun objectHash(): ObjectHash {

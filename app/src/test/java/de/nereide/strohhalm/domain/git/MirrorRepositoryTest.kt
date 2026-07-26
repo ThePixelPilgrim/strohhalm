@@ -2,11 +2,13 @@ package de.nereide.strohhalm.domain.git
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 class MirrorRepositoryTest {
 
@@ -18,6 +20,32 @@ class MirrorRepositoryTest {
 
     private val a = "a".repeat(64)
     private val b = "b".repeat(64)
+
+    /**
+     * Regression: on device, a mirror onto a removable volume reported
+     * `.../yamiro.git/HEAD: open failed: ENOENT`. HEAD was never the problem —
+     * `mkdirs()` had already failed and its `false` was discarded, so the first
+     * thing to actually throw was the write three lines later. The error named
+     * the wrong artifact and sent the reader looking for a missing file.
+     */
+    @Test
+    fun `a directory that cannot be created says so, instead of blaming HEAD`() {
+        val blocked = temp.newFile("not-a-directory")
+        val mirror = MirrorRepository(File(blocked, "repo.git"))
+
+        val thrown = assertThrows(IOException::class.java) {
+            mirror.initialise(ObjectHash.SHA256)
+        }
+
+        assertTrue(
+            "expected the directory in the message, got: ${thrown.message}",
+            thrown.message!!.contains(mirror.gitDir.path),
+        )
+        assertFalse(
+            "HEAD is not what failed: ${thrown.message}",
+            thrown.message!!.contains("HEAD"),
+        )
+    }
 
     @Test
     fun `initialising a sha256 mirror records the object format`() {

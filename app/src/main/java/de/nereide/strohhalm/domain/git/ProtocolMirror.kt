@@ -4,6 +4,8 @@ import de.nereide.strohhalm.domain.GitMirror
 import de.nereide.strohhalm.domain.MirrorOutcome
 import de.nereide.strohhalm.domain.MirrorProgress
 import de.nereide.strohhalm.domain.ProbeRejectedException
+import de.nereide.strohhalm.domain.SyncError
+import de.nereide.strohhalm.domain.SyncErrorCode
 import de.nereide.strohhalm.domain.SyncErrors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,6 +38,11 @@ class ProtocolMirror(
         pinnedFingerprint: String?,
         progress: MirrorProgress?,
     ): MirrorOutcome = withContext(io) {
+        // Storage first, before the network and before the keystore. A backup
+        // folder on a removable card that is not mounted is the user's problem
+        // to fix, and it is cheap to detect — unlike everything downstream of it.
+        unusableDestination(destination)?.let { return@withContext MirrorOutcome.Failure(it) }
+
         val keyPair = keyPairProvider()
         runCatching {
             // runInterruptible, not a plain call: the transfer blocks in socket
@@ -48,6 +55,42 @@ class ProtocolMirror(
             if (t is CancellationException) throw t
             MirrorOutcome.Failure(SyncErrors.fromException(t))
         }
+    }
+
+    /**
+     * Why [destination] cannot be mirrored into, or null when it can.
+     *
+     * This exists because of a real device failure: a mirror onto an SD card
+     * that was not mounted reported `code=UNKNOWN` with a raw
+     * `.../yamiro.git/HEAD: open failed: ENOENT`, *after* unlocking the key and
+     * opening an SSH session to Codeberg. Every part of that was misleading —
+     * HEAD was not the problem, the remote was not the problem, and the one
+     * thing the user could have acted on ("your card is not in the phone") was
+     * the one thing the message did not say.
+     *
+     * Creation is attempted rather than merely tested: a first sync into a
+     * folder that does not exist yet is legitimate, and must keep working.
+     *
+     * When creation does fail, the nearest surviving ancestor is reported. On
+     * Android an unmounted volume takes its whole subtree with it, so an answer
+     * of `/storage` means the card is gone, whereas the backup root still
+     * existing means only the folder was removed. That distinction is the
+     * difference between "insert your card" and "re-pick your backup folder",
+     * and it costs one loop to provide.
+     */
+    private fun unusableDestination(destination: File): SyncError? {
+        val parent = destination.parentFile ?: return null
+        if (parent.isDirectory || parent.mkdirs()) return null
+
+        var nearest: File? = parent.parentFile
+        while (nearest != null && !nearest.isDirectory) nearest = nearest.parentFile
+
+        return SyncError(
+            SyncErrorCode.PERMISSION_LOST,
+            "the backup folder $parent is not reachable. The nearest folder that " +
+                "does exist is ${nearest?.path ?: "none"}. If the backup is on a " +
+                "removable card, check that the card is inserted and mounted.",
+        )
     }
 
     private fun mirror(
