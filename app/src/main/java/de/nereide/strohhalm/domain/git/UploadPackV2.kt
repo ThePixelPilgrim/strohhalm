@@ -18,6 +18,14 @@ data class ServerCapabilities(
     fun supports(command: String): Boolean = raw.containsKey(command)
 }
 
+/** One ref as the server described it. Ids are hex, at the negotiated length. */
+data class RemoteRef(
+    val name: String,
+    val objectId: String,
+    val symrefTarget: String? = null,
+    val peeled: String? = null,
+)
+
 /**
  * Client half of git's protocol v2 over an already-open `git-upload-pack`
  * channel.
@@ -71,5 +79,69 @@ class UploadPackV2(
 
         val format = entries["object-format"]?.takeIf { it.isNotEmpty() } ?: "sha1"
         return ServerCapabilities(entries, ObjectHash.fromConfigName(format))
+    }
+
+    /**
+     * Every ref under `refs/`, plus `HEAD`.
+     *
+     * The `refs/` prefix is deliberately broad: a mirror that tracked only head
+     * refs is how backups end up quietly incomplete, so branches, tags and notes
+     * are all requested in one call. `HEAD` needs its own prefix — ls-refs
+     * filters strictly, and without the symref answer local HEAD could only be
+     * guessed, breaking `git clone` from any mirror whose default branch is not
+     * the guess.
+     *
+     * `unborn` is deliberately *not* sent: servers before git 2.30 die on the
+     * unknown keyword, and an unborn HEAD names no object a mirror could fetch.
+     */
+    fun lsRefs(caps: ServerCapabilities): List<RemoteRef> {
+        writeCommand(
+            "ls-refs",
+            caps,
+            listOf("peel", "symrefs", "ref-prefix HEAD", "ref-prefix refs/"),
+        )
+
+        val refs = mutableListOf<RemoteRef>()
+        while (true) {
+            when (val pkt = PktLine.read(input)) {
+                is Pkt.Flush, is Pkt.ResponseEnd -> break
+                is Pkt.Delim -> Unit
+                is Pkt.Data -> {
+                    val line = pkt.text().trim()
+                    if (line.isEmpty()) continue
+                    val fields = line.split(' ')
+                    if (fields.size < 2) continue
+                    refs += RemoteRef(
+                        objectId = fields[0],
+                        name = fields[1],
+                        symrefTarget = fields.firstOrNull { it.startsWith("symref-target:") }
+                            ?.removePrefix("symref-target:"),
+                        peeled = fields.firstOrNull { it.startsWith("peeled:") }
+                            ?.removePrefix("peeled:"),
+                    )
+                }
+            }
+        }
+        return refs
+    }
+
+    /**
+     * A v2 command: the command line and capabilities, a delimiter, then the
+     * arguments, then a flush.
+     *
+     * `object-format` must be echoed back or a SHA-256 server will refuse the
+     * request — the negotiation is two-sided, not an announcement.
+     */
+    private fun writeCommand(
+        command: String,
+        caps: ServerCapabilities,
+        arguments: List<String>,
+    ) {
+        PktLine.writeString(output, "command=$command\n")
+        PktLine.writeString(output, "object-format=${caps.objectHash.configName}\n")
+        PktLine.writeDelim(output)
+        arguments.forEach { PktLine.writeString(output, "$it\n") }
+        PktLine.writeFlush(output)
+        output.flush()
     }
 }
