@@ -18,6 +18,8 @@ enum class SyncErrorCode {
     HOST_UNREACHABLE,
     REMOTE_ERROR,
     LOCAL_CORRUPT,
+    /** The process died mid-sync; the row was left claiming to be running. */
+    INTERRUPTED,
     UNKNOWN,
 }
 

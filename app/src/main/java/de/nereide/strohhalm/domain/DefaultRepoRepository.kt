@@ -80,6 +80,12 @@ class DefaultRepoRepository(
         )
     }
 
+    override suspend fun resetStaleSyncing(error: SyncError) {
+        dao.all()
+            .filter { it.lastStatus == SyncStatus.SYNCING }
+            .forEach { markFailure(it.id, error) }
+    }
+
     override suspend fun delete(id: Long) {
         val repo = dao.byId(id) ?: return
         dao.delete(repo)

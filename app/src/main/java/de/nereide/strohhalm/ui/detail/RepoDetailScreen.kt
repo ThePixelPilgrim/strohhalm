@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
 import de.nereide.strohhalm.ui.add.DiagnosticCard
+import de.nereide.strohhalm.ui.common.SyncProgressBar
 import de.nereide.strohhalm.ui.common.syncErrorText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +60,7 @@ fun RepoDetailScreen(
     val deleted by viewModel.deleted.collectAsStateWithLifecycle()
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()
     val refs by viewModel.refs.collectAsStateWithLifecycle()
+    val progress by viewModel.progress.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var alsoDeleteFiles by remember { mutableStateOf(false) }
@@ -100,6 +102,8 @@ fun RepoDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            SyncProgressBar(progress)
+
             syncErrorText(current.lastErrorCode)?.let { message ->
                 DiagnosticCard(
                     message = message,

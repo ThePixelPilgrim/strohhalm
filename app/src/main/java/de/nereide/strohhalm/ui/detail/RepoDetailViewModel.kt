@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import de.nereide.strohhalm.data.Repo
 import de.nereide.strohhalm.domain.GitMirror
 import de.nereide.strohhalm.domain.RepoRepository
+import de.nereide.strohhalm.domain.SyncProgress
 import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.ui.common.appContainer
 import kotlinx.coroutines.Dispatchers
@@ -33,27 +34,25 @@ class RepoDetailViewModel(
     private val _deleted = MutableStateFlow(false)
     val deleted: StateFlow<Boolean> = _deleted.asStateFlow()
 
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+    /** Owned by the runner: the sync outlives this screen. */
+    val syncing: StateFlow<Boolean> = syncRunner.running
+    val progress: StateFlow<SyncProgress?> = syncRunner.progress
 
     private val _refs = MutableStateFlow<List<String>>(emptyList())
     val refs: StateFlow<List<String>> = _refs.asStateFlow()
 
     init {
         loadRefs()
+        // Re-read the refs whenever a sync finishes, so the list reflects what
+        // was just fetched without the user navigating away and back.
+        viewModelScope.launch {
+            syncRunner.running.collect { running -> if (!running) loadRefs() }
+        }
     }
 
     fun syncNow() {
-        if (_syncing.value) return
-        viewModelScope.launch {
-            _syncing.value = true
-            try {
-                syncRunner.syncOne(id)
-                loadRefs()
-            } finally {
-                _syncing.value = false
-            }
-        }
+        syncRunner.launchSyncOne(id)
+        // Refs are re-read when the runner goes idle again, below.
     }
 
     /**

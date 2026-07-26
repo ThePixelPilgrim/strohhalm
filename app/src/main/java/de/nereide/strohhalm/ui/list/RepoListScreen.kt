@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
 import de.nereide.strohhalm.data.Repo
 import de.nereide.strohhalm.data.SyncStatus
+import de.nereide.strohhalm.ui.common.SyncProgressBar
 import de.nereide.strohhalm.ui.common.syncErrorText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +52,7 @@ fun RepoListScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()
+    val progress by viewModel.progress.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -84,12 +86,12 @@ fun RepoListScreen(
                 Text(stringResource(R.string.list_empty))
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(vertical = 8.dp)
-            ) {
-                items(uiState.repos, key = { it.id }) { repo ->
-                    RepoRow(repo = repo, onClick = { onOpenRepo(repo.id) })
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                SyncProgressBar(progress)
+                LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+                    items(uiState.repos, key = { it.id }) { repo ->
+                        RepoRow(repo = repo, onClick = { onOpenRepo(repo.id) })
+                    }
                 }
             }
         }

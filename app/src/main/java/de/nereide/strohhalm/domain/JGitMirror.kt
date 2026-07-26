@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.digest.BuiltinDigests
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.lib.ProgressMonitor
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.transport.CredentialsProvider
@@ -44,16 +45,18 @@ class JGitMirror(
         remoteUrl: String,
         destination: File,
         pinnedFingerprint: String?,
+        progress: MirrorProgress?,
     ): MirrorOutcome = withContext(io) {
         AndroidSystemReader.install()
         runCatching {
             if (requiresSsh(remoteUrl)) {
                 installSessionFactory(pinnedFingerprint, observed = null)
             }
+            val monitor = progress?.let(::ThrottledMonitor)
             if (File(destination, "HEAD").isFile) {
-                fetchInto(destination, remoteUrl)
+                fetchInto(destination, remoteUrl, monitor)
             } else {
-                cloneMirror(remoteUrl, destination)
+                cloneMirror(remoteUrl, destination, monitor)
             }
             MirrorOutcome.Success(
                 sizeBytes = sizeBytes(destination),
@@ -94,18 +97,19 @@ class JGitMirror(
         return destination.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
-    private fun cloneMirror(remoteUrl: String, destination: File) {
+    private fun cloneMirror(remoteUrl: String, destination: File, monitor: ProgressMonitor?) {
         destination.parentFile?.mkdirs()
         Git.cloneRepository()
             .setURI(remoteUrl)
             .setDirectory(destination)
             .setBare(true)
             .setMirror(true)
+            .apply { monitor?.let { setProgressMonitor(it) } }
             .call()
             .close()
     }
 
-    private fun fetchInto(destination: File, remoteUrl: String) {
+    private fun fetchInto(destination: File, remoteUrl: String, monitor: ProgressMonitor?) {
         openRepository(destination).use { repo ->
             Git(repo).use { git ->
                 git.fetch()
@@ -113,8 +117,56 @@ class JGitMirror(
                     .setRefSpecs(RefSpec("+refs/*:refs/*"))
                     .setRemoveDeletedRefs(true)
                     .setTagOpt(TagOpt.FETCH_TAGS)
+                    .apply { monitor?.let { setProgressMonitor(it) } }
                     .call()
             }
+        }
+    }
+
+    /**
+     * Bridges JGit's [ProgressMonitor] to [MirrorProgress].
+     *
+     * JGit calls `update` per object, which for a large repository means tens of
+     * thousands of calls. Emitting each one would swamp the UI's state flow for
+     * no benefit, so updates are throttled to one every [MIN_INTERVAL_MS] —
+     * except task boundaries, which always emit so the phase name never lags.
+     */
+    private class ThrottledMonitor(private val sink: MirrorProgress) : ProgressMonitor {
+
+        private var task = ""
+        private var total = 0
+        private var done = 0
+        private var lastEmit = 0L
+
+        override fun start(totalTasks: Int) = Unit
+
+        override fun beginTask(title: String?, totalWork: Int) {
+            task = title.orEmpty()
+            total = if (totalWork == ProgressMonitor.UNKNOWN) 0 else totalWork
+            done = 0
+            emit(force = true)
+        }
+
+        override fun update(completed: Int) {
+            done += completed
+            emit(force = false)
+        }
+
+        override fun endTask() = emit(force = true)
+
+        override fun isCancelled(): Boolean = false
+
+        override fun showDuration(enabled: Boolean) = Unit
+
+        private fun emit(force: Boolean) {
+            val now = System.currentTimeMillis()
+            if (!force && now - lastEmit < MIN_INTERVAL_MS) return
+            lastEmit = now
+            sink.update(task, done, total)
+        }
+
+        private companion object {
+            const val MIN_INTERVAL_MS = 250L
         }
     }
 

@@ -123,4 +123,18 @@ class DefaultRepoRepositoryTest {
 
         assertTrue(dao.all().isEmpty())
     }
+
+    @Test
+    fun `resetStaleSyncing rewrites rows left mid-sync and leaves others alone`() = runTest {
+        val stuck = repository.add("Stuck", "ssh://host/a.git", "SHA256:aaa")
+        val fine = repository.add("Fine", "ssh://host/b.git", "SHA256:bbb")
+        repository.markSuccess(fine, 10, 2)
+        repository.markSyncing(stuck)
+
+        repository.resetStaleSyncing(SyncError(SyncErrorCode.INTERRUPTED))
+
+        assertEquals(SyncStatus.FAILED, dao.byId(stuck)!!.lastStatus)
+        assertEquals("INTERRUPTED", dao.byId(stuck)!!.lastErrorCode)
+        assertEquals("a healthy row must be untouched", SyncStatus.OK, dao.byId(fine)!!.lastStatus)
+    }
 }

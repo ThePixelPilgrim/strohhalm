@@ -9,6 +9,18 @@ sealed interface MirrorOutcome {
 }
 
 /**
+ * Progress from the underlying engine: the current task ("Receiving objects"),
+ * how much of it is done, and how much there is. [total] is 0 when unknown.
+ *
+ * Mirroring a large repository legitimately runs for many minutes. Without this,
+ * a slow sync and a deadlocked one are indistinguishable to the user, which is
+ * worse than either.
+ */
+fun interface MirrorProgress {
+    fun update(task: String, completed: Int, total: Int)
+}
+
+/**
  * Maintains bare mirror clones. Implementations are the only place in the app
  * that import JGit, so replacing the engine touches exactly one file.
  *
@@ -29,6 +41,7 @@ interface GitMirror {
         remoteUrl: String,
         destination: File,
         pinnedFingerprint: String?,
+        progress: MirrorProgress? = null,
     ): MirrorOutcome
 
     /**

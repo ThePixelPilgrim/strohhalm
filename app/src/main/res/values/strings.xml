@@ -40,6 +40,8 @@
     <string name="list_refs">%1$d refs</string>
     <string name="status_never">Never synced</string>
     <string name="status_syncing">Syncing…</string>
+    <string name="progress_of">%1$s — %2$d of %3$d</string>
+    <string name="progress_indeterminate">%1$s…</string>
     <string name="status_ok">Last synced %1$s</string>
     <string name="status_failed">Failed</string>
 
@@ -82,6 +84,7 @@
     <string name="error_host_unreachable">Could not reach the server.</string>
     <string name="error_remote_error">The remote repository could not be read.</string>
     <string name="error_local_corrupt">The local mirror looks damaged. Delete and re-add the repository.</string>
+    <string name="error_interrupted">The sync was interrupted before it finished. Try again.</string>
     <string name="error_unknown">The sync failed.</string>
 
     <!-- Settings -->

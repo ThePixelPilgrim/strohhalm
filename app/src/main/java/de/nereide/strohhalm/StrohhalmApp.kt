@@ -3,6 +3,7 @@ package de.nereide.strohhalm
 import android.app.Application
 import de.nereide.strohhalm.domain.AndroidSystemReader
 import de.nereide.strohhalm.domain.SshdEnvironment
+import kotlinx.coroutines.launch
 
 /**
  * Application entry point. Builds the [AppContainer] which workers and screens
@@ -24,5 +25,11 @@ class StrohhalmApp : Application() {
         AndroidSystemReader.install()
 
         container = DefaultAppContainer(this)
+
+        // A process killed mid-sync leaves rows claiming to be running forever,
+        // implying work is happening when nothing is.
+        container.applicationScope.launch {
+            runCatching { container.syncRunner.resetStale() }
+        }
     }
 }

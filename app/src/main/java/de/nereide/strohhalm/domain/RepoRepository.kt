@@ -25,5 +25,8 @@ interface RepoRepository {
 
     suspend fun markFailure(id: Long, error: SyncError)
 
+    /** Rewrites any row still marked SYNCING, after a process died mid-sync. */
+    suspend fun resetStaleSyncing(error: SyncError)
+
     suspend fun delete(id: Long)
 }

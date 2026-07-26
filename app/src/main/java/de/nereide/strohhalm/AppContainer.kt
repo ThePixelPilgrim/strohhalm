@@ -64,6 +64,6 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     override val syncRunner: SyncRunner by lazy {
-        SyncRunner(repos = repoRepository, mirror = gitMirror)
+        SyncRunner(repos = repoRepository, mirror = gitMirror, scope = applicationScope)
     }
 }
