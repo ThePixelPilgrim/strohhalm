@@ -2,6 +2,7 @@ package de.nereide.strohhalm.domain.archive
 
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.zip.CRC32
@@ -27,6 +28,9 @@ interface MirrorArchiver {
      * Throws [InterruptedException] if the calling thread is interrupted, and
      * deletes [target] before doing so — a half-written archive that survived
      * would be indistinguishable from a finished one.
+     *
+     * Throws [java.io.IOException] if [gitDir] is not a directory, or holds
+     * nothing to pack. An archive of nothing is never a legitimate result.
      */
     fun archive(gitDir: File, target: File, progress: ArchiveProgress?): ArchiveResult
 }
@@ -34,6 +38,18 @@ interface MirrorArchiver {
 class ZipMirrorArchiver : MirrorArchiver {
 
     override fun archive(gitDir: File, target: File, progress: ArchiveProgress?): ArchiveResult {
+        // The mirror folder is on user-chosen external storage: it can be
+        // deleted from a file manager, or become unreadable when the all-files
+        // permission is revoked. Neither raises anything on its own — walking a
+        // directory that is not there simply yields nothing, and a zip with no
+        // entries is a perfectly valid twenty-two-byte file whose checksum
+        // verifies. The user would be handed something that presents as their
+        // repository and holds none of it, so the refusal has to be explicit
+        // and has to live here, at the layer that must not be able to author
+        // such a file whatever calls it.
+        if (!gitDir.isDirectory) {
+            throw IOException("not a directory: $gitDir — the backup folder is gone or unreadable")
+        }
         // Sorted, because directory iteration order is not guaranteed and the
         // archive has to be reproducible for its checksum to mean anything.
         //
@@ -51,6 +67,11 @@ class ZipMirrorArchiver : MirrorArchiver {
             .filter { (_, relative) -> relative.isNotEmpty() }
             .sortedBy { (_, relative) -> relative }
             .toList()
+
+        // Readable but empty is the same lie in a different shape.
+        if (entries.isEmpty()) {
+            throw IOException("nothing to archive in $gitDir — the mirror is empty")
+        }
 
         val root = gitDir.name
         val digest = MessageDigest.getInstance("SHA-256")

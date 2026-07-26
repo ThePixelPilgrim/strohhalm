@@ -106,6 +106,22 @@ class RepoDetailViewModel(
             val outcome = runCatching {
                 withContext(Dispatchers.IO) {
                     val repository = MirrorRepository(gitDir)
+                    // Before anything else, because every step below is happy
+                    // to succeed on a mirror that is not there: `localRefs()`
+                    // is total and returns an empty map, its fingerprint is a
+                    // well-defined digest of nothing, and the space check reads
+                    // the row's stored size rather than the filesystem. The
+                    // user would see a share succeed. `ArchiveMaintenance`
+                    // guards with the same `exists()` call for the same reason.
+                    if (!repository.exists()) {
+                        throw ArchiveRefused(
+                            SyncError(
+                                SyncErrorCode.PERMISSION_LOST,
+                                "no mirror at ${gitDir.path} — " +
+                                    "the folder is gone or no longer readable",
+                            )
+                        )
+                    }
                     val fingerprint = RefFingerprint.of(repository.localRefs())
                     val slug = ArchiveNames.slugForMirror(gitDir)
 

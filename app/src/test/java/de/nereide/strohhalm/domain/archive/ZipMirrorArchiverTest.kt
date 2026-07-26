@@ -9,6 +9,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
@@ -126,6 +127,51 @@ class ZipMirrorArchiverTest {
 
         assertTrue("expected InterruptedException, got $thrown", thrown is InterruptedException)
         assertFalse("a cancelled build must not leave its output", target.exists())
+    }
+
+    /**
+     * The mirror folder lives on user-chosen external storage, so it can vanish
+     * between one share and the next — deleted from a file manager, or the
+     * all-files permission revoked. Walking a directory that is not there yields
+     * no entries, and `ZipOutputStream.finish()` is happy to write a valid,
+     * empty, 22-byte archive for that. The user would be handed a file that
+     * presents as their repository and holds nothing.
+     */
+    @Test
+    fun `archiving a directory that does not exist throws and writes nothing`() {
+        val missing = File(temp.root, "gone.git")
+        val target = File(temp.root, "out.zip")
+
+        val thrown = runCatching { archiver.archive(missing, target, null) }.exceptionOrNull()
+
+        assertTrue(
+            "expected IOException, got $thrown (target is ${target.length()} bytes)",
+            thrown is IOException,
+        )
+        assertTrue(
+            "the message must name the directory, was: ${thrown?.message}",
+            thrown?.message?.contains(missing.path) == true,
+        )
+        assertFalse("an empty zip must not be left behind", target.exists())
+    }
+
+    /**
+     * Same hazard one step along: the directory exists but holds nothing, which
+     * is no more a repository than a missing one. An archive of nothing is never
+     * a legitimate result, whatever the caller asked for.
+     */
+    @Test
+    fun `archiving an empty directory throws and writes nothing`() {
+        val empty = temp.newFolder("empty.git")
+        val target = File(temp.root, "out.zip")
+
+        val thrown = runCatching { archiver.archive(empty, target, null) }.exceptionOrNull()
+
+        assertTrue(
+            "expected IOException, got $thrown (target is ${target.length()} bytes)",
+            thrown is IOException,
+        )
+        assertFalse("an empty zip must not be left behind", target.exists())
     }
 
     /** Packs are already deflated; re-deflating them is pure cost. */
