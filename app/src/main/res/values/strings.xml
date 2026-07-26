@@ -31,6 +31,58 @@
     <string name="probe_copy">Copy file contents</string>
     <string name="probe_failed">The folder could not be written to: %1$s</string>
 
+    <!-- Repository list -->
+    <string name="list_title">Repositories</string>
+    <string name="list_empty">No repositories yet. Tap + to mirror one.</string>
+    <string name="list_add">Add repository</string>
+    <string name="list_sync_now">Sync now</string>
+    <string name="list_settings">Settings</string>
+    <string name="list_refs">%1$d refs</string>
+    <string name="status_never">Never synced</string>
+    <string name="status_syncing">Syncing…</string>
+    <string name="status_ok">Last synced %1$s</string>
+    <string name="status_failed">Failed</string>
+
+    <!-- Add repository -->
+    <string name="add_title">Add repository</string>
+    <string name="add_url_label">Remote URL</string>
+    <string name="add_url_placeholder">ssh://git@host/srv/git/repo.git</string>
+    <string name="add_name_label">Name (optional)</string>
+    <string name="add_probe">Continue</string>
+    <string name="add_checking">Contacting the server…</string>
+    <string name="add_fingerprint_title">Trust this server?</string>
+    <string name="add_fingerprint_body">Strohhalm has not seen this server before. Check that the fingerprint matches the one on your server, then accept it. It will be remembered, and you will be warned if it ever changes.\n\n%1$s</string>
+    <string name="add_fingerprint_accept">Trust and add</string>
+
+    <!-- Repository detail -->
+    <string name="detail_title">Repository</string>
+    <string name="detail_remote">Remote</string>
+    <string name="detail_local">Local mirror</string>
+    <string name="detail_size">Size</string>
+    <string name="detail_last_sync">Last successful sync</string>
+    <string name="detail_last_attempt">Last attempt</string>
+    <string name="detail_fingerprint">Host key</string>
+    <string name="detail_never">Never</string>
+    <string name="detail_refs_title">Mirrored refs (%1$d)</string>
+    <string name="detail_refs_body">Every branch and tag captured, including ones never checked out. This is what a plain clone would have missed.</string>
+    <string name="detail_delete_title">Delete repository?</string>
+    <string name="detail_delete_body">Strohhalm will stop mirroring it.</string>
+    <string name="detail_delete_files">Also delete the local mirror from storage</string>
+
+    <!-- Diagnostics -->
+    <string name="copy_diagnostics">Copy diagnostics</string>
+
+    <!-- Sync error messages -->
+    <string name="error_no_network">No network connection — the mirrors are out of date.</string>
+    <string name="error_low_storage">Not enough free space to sync. Free up space and try again.</string>
+    <string name="error_permission_lost">Storage access was revoked. Grant it again to resume backups.</string>
+    <string name="error_auth_failed">The server rejected this key — did you add the public key from Settings?</string>
+    <string name="error_host_key_mismatch">The server presented a different host key. This may mean the server was rebuilt, or that the connection is being intercepted. Syncing is stopped until you confirm.</string>
+    <string name="error_host_unreachable">Could not reach the server.</string>
+    <string name="error_remote_error">The remote repository could not be read.</string>
+    <string name="error_local_corrupt">The local mirror looks damaged. Delete and re-add the repository.</string>
+    <string name="error_unknown">The sync failed.</string>
+
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_folder_title">Backup folder</string>

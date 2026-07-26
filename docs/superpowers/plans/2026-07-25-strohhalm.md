@@ -1808,10 +1808,15 @@ import java.util.concurrent.atomic.AtomicReference
  * JGit-backed [GitMirror]. The single file in `src/main` allowed to import JGit
  * or MINA SSHD, so swapping the engine is a one-file change.
  *
- * Mirroring uses `+refs/*:refs/*` so every ref — branches, tags, notes — maps
- * 1:1 into the local repository, and `setRemoveDeletedRefs(true)` propagates
- * upstream deletions. A plain clone would track only `refs/heads/*`, which is
- * how backups end up quietly incomplete.
+ * Mirroring uses an all-refs refspec (`+refs/…:refs/…`) so every ref — branches,
+ * tags, notes — maps 1:1 into the local repository, and
+ * `setRemoveDeletedRefs(true)` propagates upstream deletions. A plain clone
+ * would track only the head refs, which is how backups end up quietly
+ * incomplete.
+ *
+ * NOTE: the refspec is written with an ellipsis rather than the literal glob.
+ * Kotlin block comments NEST, so an unbalanced slash-star inside a comment
+ * opens a nested comment that never closes and the file stops compiling.
  */
 class JGitMirror(
     private val keyPairProvider: suspend () -> KeyPair,

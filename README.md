@@ -9,27 +9,31 @@ Keeps offline mirror copies of remote git repositories on an Android device.
 > not yet sync anything.** The SSH transport, the git mirror engine, persistence
 > and the entire user interface are not implemented.
 >
-> **`v0.1.1` cannot back anything up yet.** It has onboarding, generates its SSH
-> key and lets you copy the public key — but there is no git engine behind it, so
-> no repository can be added or mirrored.
->
-> It exists to validate on real hardware the parts that unit tests cannot reach:
-> the all-files-access grant, the folder picker's path derivation, and AES-GCM
-> under the Android Keystore. Until the mirror engine lands, treat the rest of
-> this document as a description of intent rather than behaviour.
+> **`v0.1.2` should be able to mirror a repository — but that has never been
+> proven against a real server.** Everything is in place: the git engine, host
+> key confirmation, persistence, and an add/list/detail flow with a manual sync.
+> Whether JGit and MINA SSHD actually work on Android is exactly what this build
+> is for.
 >
 > **Current state**
 >
 > | Working | Not yet |
 > | --- | --- |
-> | Onboarding, permissions, folder picker | Git mirror engine (JGit) |
-> | Ed25519 key generation, encrypted at rest | Repository list, add, detail |
-> | Public key display and copy | Room persistence |
-> | Storage path probe | Background sync worker |
-> | Host key trust policy, error taxonomy | Sync interval setting |
+> | Onboarding, permissions, folder picker | Background sync worker |
+> | Ed25519 key generation, encrypted at rest | Sync interval setting |
+> | Public key display and copy | Notifications |
+> | Add repository with host-key confirmation | Verified against a real server |
+> | Mirror clone/fetch, manual sync, ref listing | |
 >
-> 65 unit tests pass. The next blocker is a hardware spike pinning JGit/MINA SSHD
-> behaviour against a real server.
+> 74 unit tests pass. Syncing is manual only — a background scheduler would hide
+> the failures this build exists to surface.
+>
+> ### Reporting a failure
+>
+> Every error screen shows the library's own message and the exception class
+> chain, with a **Copy diagnostics** button. That detail is deliberately visible
+> rather than hidden behind a friendly message: the app is being developed
+> without adb, so the screen is the only channel back.
 >
 > ### The path probe
 >

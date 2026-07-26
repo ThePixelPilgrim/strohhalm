@@ -21,7 +21,20 @@ enum class SyncErrorCode {
     UNKNOWN,
 }
 
-data class SyncError(val code: SyncErrorCode, val detail: String? = null)
+/**
+ * [detail] is the library's own message, shown under the friendly text.
+ *
+ * [diagnostic] is the exception class chain — e.g.
+ * `TransportException <- SshException <- SocketTimeoutException`. It exists
+ * because the app is being debugged from the device without adb, where the UI is
+ * the only channel back. A message alone frequently cannot distinguish an SSH
+ * negotiation failure from a plain network timeout; the type chain can.
+ */
+data class SyncError(
+    val code: SyncErrorCode,
+    val detail: String? = null,
+    val diagnostic: String? = null,
+)
 
 /**
  * Raised by the server key database when a host presents a key other than the
@@ -41,11 +54,20 @@ class HostKeyMismatchException(
 object SyncErrors {
 
     fun fromException(t: Throwable): SyncError {
+        val diagnostic = describeChain(t)
         for (cause in causeChain(t)) {
-            classify(cause)?.let { return it }
+            classify(cause)?.let { return it.copy(diagnostic = diagnostic) }
         }
-        return SyncError(SyncErrorCode.UNKNOWN, t.message)
+        return SyncError(SyncErrorCode.UNKNOWN, t.message, diagnostic)
     }
+
+    /**
+     * The exception class chain, most specific last. Preserved because a message
+     * alone often cannot distinguish an SSH negotiation failure from a plain
+     * network timeout, and the device is the only place this app can be observed.
+     */
+    private fun describeChain(t: Throwable): String =
+        causeChain(t).joinToString(" <- ") { it::class.java.simpleName }
 
     private fun classify(t: Throwable): SyncError? = when {
         t is HostKeyMismatchException ->

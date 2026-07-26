@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
                     val container = (application as StrohhalmApp).container
                     val root = container.settingsRepository.storageRoot.first()
                     startDestination = if (root != null && hasStorageAccess()) {
-                        Routes.SETTINGS
+                        Routes.LIST
                     } else {
                         Routes.ONBOARDING
                     }

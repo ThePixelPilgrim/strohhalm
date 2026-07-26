@@ -110,6 +110,12 @@ If Gradle cannot find the SDK, create `local.properties` with
   and a real git remote whose `authorized_keys` you can edit. Task 13's periodic-sync
   verification needs a device. Do not fake these or mark them done.
 
+- **Kotlin block comments nest.** Writing a git refspec such as the literal
+  `+refs/<star>:refs/<star>` inside a KDoc opens a nested comment that never closes, and
+  the file fails with `Unclosed comment` — a confusing error pointing at the end of the
+  file rather than the comment. Write refspecs in prose (`+refs/…:refs/…`) inside
+  comments; the literal glob is fine inside string literals.
+
 - **Parallel agents cannot share this repo's build directory.** Kotlin compiles the whole
   test source set at once, so one agent's not-yet-implemented test breaks *everyone's*
   `compileDebugUnitTestKotlin`; and concurrent `testDebugUnitTest` runs clobber each
