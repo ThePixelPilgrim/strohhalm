@@ -157,6 +157,16 @@ through JGit's `SshdSessionFactory`.
   cause.
 - **Authentication** is publickey only, with the in-memory `KeyPair` from
   `keyPairProvider`. The private key still never touches the filesystem.
+- **Protocol v2 is requested out-of-band**: the exec channel sets the
+  `GIT_PROTOCOL=version=2` SSH env var, exactly as git itself does. Without it
+  `upload-pack` speaks v0 regardless of what the client says in-band. Hosted
+  forges accept the variable; a self-managed OpenSSH server needs
+  `AcceptEnv GIT_PROTOCOL`, and without it the engine reports its clear
+  v0 refusal.
+- **Read timeouts are configured explicitly** (`IDLE_TIMEOUT`,
+  `NIO2_READ_TIMEOUT`), not left to library defaults. Both re-arm on traffic;
+  only a silently dropped connection trips them — the unbounded-read hang this
+  project has been burned by twice must stay designed out, not accidentally out.
 - **Exposes** `stdin`, `stdout` and `stderr` as separate streams.
 
 That last point removes a whole class of bug. The diagnostic probe in
@@ -178,8 +188,13 @@ pack data, band 2 progress text, band 3 fatal error. Band 2 feeds
 
 1. Read the capability advertisement. Require `version 2`; read the server's
    `object-format` (absent means `sha1`) and select the matching `ObjectHash`.
-2. `ls-refs` with `peel`, `symrefs`, `unborn` → the full ref list.
-3. `fetch`: `want` per remote ref, `have` per local ref tip, `done`.
+2. `ls-refs` with `peel`, `symrefs`, and ref-prefixes for both `HEAD` and
+   `refs/` → the full ref list plus the symref local HEAD is set from.
+   (`unborn` is not sent: pre-2.30 servers die on the unknown keyword, and an
+   unborn HEAD names no object a mirror could fetch.)
+3. `fetch`: `want` per remote ref, `have` per local ref tip, `done` — skipped
+   entirely when every want is already a local tip, so the steady-state sync
+   writes no pack at all.
 4. Read the response sections, then stream the `packfile` section to
    `PackIndexer`.
 
@@ -380,9 +395,11 @@ before considering the `gix-pack` seam.
 - **Tips-only negotiation** may produce a larger pack than git would on a
   divergent history. Correctness is unaffected. Revisit only if measurement shows
   it matters.
-- **Pack accumulation.** Many small packs after many fetches. Acceptable, and
-  arguably right for an append-only backup, but worth watching on a repository
-  that syncs for a year.
+- **Pack accumulation.** Many small packs after many fetches. Mitigated by the
+  no-change fast path — a sync where nothing moved upstream skips the fetch and
+  writes no pack — so packs accumulate only as fast as the remote actually
+  changes. Acceptable, and arguably right for an append-only backup, but worth
+  watching on a busy repository that syncs for a year.
 - **A hand-written `.idx`** is new code in the position of highest consequence.
   Mitigated by real-git validation in tests and by the fact that the index is
   regenerable.

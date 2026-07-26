@@ -19,7 +19,8 @@ Every task's requirements implicitly include these. Violating one is a defect ev
 - **`UP-TO-DATE` is not evidence.** Use `--rerun` and read the per-class counts.
 - **`isMinifyEnabled = false`** stays. MINA SSHD resolves implementations through `ServiceLoader` and reflection.
 - **Never push, commit, or write to a remote.** Only `git-upload-pack` is ever invoked.
-- **The new `domain/git/` package is the only place in `src/main` that may import MINA SSHD.** Library exceptions are mapped to `SyncError` before leaving it. Tests may import JGit to build fixtures.
+- **The new `domain/git/` package is the only place in `src/main` that may import MINA SSHD** — apart from the existing `SshdEnvironment.kt`, which owns the `~`-resolution workaround and stays where it is. Library exceptions are mapped to `SyncError` before leaving the package. Tests may import JGit to build fixtures.
+- **Android's `InputStream` gained `readNBytes`/`skipNBytes` only at API 33.** `minSdk` is 26, so neither may appear in `src/main`; use a plain bounded `read` loop. They are fine in JVM tests.
 - **The private key never leaves internal storage** and is never written to the mirror folder.
 - **No hardcoded user-facing strings** in Compose; everything through `res/values/strings.xml`.
 - **`versionName` lives only in `version.properties`.** Never hand-edit `versionCode`.
@@ -685,6 +686,7 @@ import org.apache.sshd.client.channel.ChannelExec
 import org.apache.sshd.client.session.ClientSession
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.digest.BuiltinDigests
+import org.apache.sshd.core.CoreModuleProperties
 import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
@@ -819,6 +821,12 @@ class UploadPackChannel(
                     }
                 }
             }
+            // A silently dropped connection must never park a read forever —
+            // the recurring failure mode this project has already been burned
+            // by twice. Both timers re-arm on traffic, so a slow-but-alive
+            // transfer is unaffected; only true silence trips them.
+            CoreModuleProperties.IDLE_TIMEOUT.set(this, timeout)
+            CoreModuleProperties.NIO2_READ_TIMEOUT.set(this, timeout)
             start()
         }
         client = ssh
@@ -832,6 +840,12 @@ class UploadPackChannel(
 
         // Single-quoted, as git itself does: the remote runs this through a shell.
         val exec = opened.createExecChannel("git-upload-pack '${remote.path}'")
+        // Protocol v2 is opt-in, and the switch is out-of-band: upload-pack
+        // speaks v0 unless GIT_PROTOCOL=version=2 reaches its environment.
+        // git sends it as an SSH channel env var (SendEnv), and every major
+        // host accepts it; without this line the engine can never see a v2
+        // advertisement from any real server.
+        exec.setEnv("GIT_PROTOCOL", "version=2")
         channel = exec
         // Leaving out/err unset is what makes the inverted streams available.
         exec.open().verify(timeout)
@@ -845,7 +859,10 @@ class UploadPackChannel(
         val err = channel?.invertedErr ?: return ""
         val available = err.available()
         if (available <= 0) return ""
-        String(err.readNBytes(minOf(available, MAX_SERVER_MESSAGE)), Charsets.UTF_8).trim()
+        // Not readNBytes: Android only gained it at API 33, and minSdk is 26.
+        val buffer = ByteArray(minOf(available, MAX_SERVER_MESSAGE))
+        val read = err.read(buffer)
+        if (read <= 0) "" else String(buffer, 0, read, Charsets.UTF_8).trim()
     }.getOrDefault("")
 
     override fun close() {
@@ -953,6 +970,15 @@ class UploadPackV2AdvertisementTest {
             advertisement("version 2", "ls-refs").readAdvertisement()
         }
     }
+
+    /** A refusing server may answer with a v0-style ERR packet instead of an advertisement. */
+    @Test
+    fun `an ERR packet surfaces the server's own words`() {
+        val thrown = assertThrows(IOException::class.java) {
+            advertisement("ERR access denied").readAdvertisement()
+        }
+        assertTrue(thrown.message!!.contains("access denied"))
+    }
 }
 ```
 
@@ -1010,6 +1036,11 @@ class UploadPackV2(
                 is Pkt.Data -> {
                     val line = pkt.text().trim()
                     if (line.isEmpty()) continue
+                    // A server refusing outright says so in an ERR packet.
+                    // Its own words beat a generic version complaint.
+                    if (line.startsWith("ERR ")) {
+                        throw IOException("the server said: ${line.removePrefix("ERR ")}")
+                    }
                     entries[line.substringBefore('=')] = line.substringAfter('=', "")
                 }
             }
@@ -1038,6 +1069,11 @@ Note: `version 2` arrives as the key `version` with value `2` only if the server
                 is Pkt.Data -> {
                     val line = pkt.text().trim()
                     if (line.isEmpty()) continue
+                    // A server refusing outright says so in an ERR packet.
+                    // Its own words beat a generic version complaint.
+                    if (line.startsWith("ERR ")) {
+                        throw IOException("the server said: ${line.removePrefix("ERR ")}")
+                    }
                     // The version line is "version 2" (space); capability lines are
                     // "key=value" or a bare "key".
                     val normalised = if (line.startsWith("version ")) {
@@ -1060,7 +1096,7 @@ grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' \
   app/build/test-results/testDebugUnitTest/TEST-de.nereide.strohhalm.domain.git.UploadPackV2AdvertisementTest.xml
 ```
 
-Expected: PASS, `tests="4" ... failures="0" errors="0"`.
+Expected: PASS, `tests="5" ... failures="0" errors="0"`.
 
 - [ ] **Step 5: Commit**
 
@@ -1088,6 +1124,7 @@ git commit -m "feat(git): read the v2 advertisement and select the negotiated ob
 package de.nereide.strohhalm.domain.git
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -1138,8 +1175,14 @@ class LsRefsTest {
         assertTrue(request.contains("object-format=sha256"))
         assertTrue(request.contains("peel"))
         assertTrue(request.contains("symrefs"))
+        // ls-refs filters strictly by prefix, so HEAD needs its own entry —
+        // "refs/" alone would never return the symref local HEAD is set from.
+        assertTrue(request.contains("ref-prefix HEAD"))
         // Everything under refs/, so branches, tags and notes all arrive.
         assertTrue(request.contains("ref-prefix refs/"))
+        // Servers before git 2.30 die on the unknown "unborn" keyword, and the
+        // mirror has no use for an unborn HEAD anyway.
+        assertFalse(request.contains("unborn"))
         assertTrue(request.endsWith("0000"))
     }
 
@@ -1180,12 +1223,22 @@ and to the `UploadPackV2` class:
     /**
      * Every ref under `refs/`, plus `HEAD`.
      *
-     * The prefix is deliberately broad: a mirror that tracked only head refs is
-     * how backups end up quietly incomplete, so branches, tags and notes are all
-     * requested in one call.
+     * The `refs/` prefix is deliberately broad: a mirror that tracked only head
+     * refs is how backups end up quietly incomplete, so branches, tags and notes
+     * are all requested in one call. `HEAD` needs its own prefix — ls-refs
+     * filters strictly, and without the symref answer local HEAD could only be
+     * guessed, breaking `git clone` from any mirror whose default branch is not
+     * the guess.
+     *
+     * `unborn` is deliberately *not* sent: servers before git 2.30 die on the
+     * unknown keyword, and an unborn HEAD names no object a mirror could fetch.
      */
     fun lsRefs(caps: ServerCapabilities): List<RemoteRef> {
-        writeCommand("ls-refs", caps, listOf("peel", "symrefs", "unborn", "ref-prefix refs/"))
+        writeCommand(
+            "ls-refs",
+            caps,
+            listOf("peel", "symrefs", "ref-prefix HEAD", "ref-prefix refs/"),
+        )
 
         val refs = mutableListOf<RemoteRef>()
         while (true) {
@@ -1355,7 +1408,10 @@ class PackIndexWriterTest {
         DataInputStream(target.inputStream().buffered()).use { input ->
             input.skipNBytes((8 + 256 * 4 + hash.rawLength + 4).toLong())
             val encoded = input.readInt()
-            assertEquals("MSB marks an indirection", -0x80000000, encoded and -0x80000000)
+            // Int.MIN_VALUE is 0x80000000 — written this way because in Kotlin,
+            // unlike Java, the hex literal itself is typed Long and won't compile
+            // against an Int.
+            assertEquals("MSB marks an indirection", Int.MIN_VALUE, encoded and Int.MIN_VALUE)
             assertEquals("index 0 into the large table", 0, encoded and 0x7fffffff)
             assertEquals(big, input.readLong())
         }
@@ -1408,7 +1464,13 @@ object PackIndexWriter {
 
     private val MAGIC = byteArrayOf(0xff.toByte(), 't'.code.toByte(), 'O'.code.toByte(), 'c'.code.toByte())
     private const val VERSION = 2
-    private const val LARGE_OFFSET_FLAG = -0x80000000 // 0x80000000 as a signed Int
+
+    /**
+     * `0x80000000` — the MSB that marks an indirection into the 64-bit table.
+     * Written as [Int.MIN_VALUE] because in Kotlin, unlike Java, the hex
+     * literal is typed `Long` and cannot be used where an `Int` is needed.
+     */
+    private const val LARGE_OFFSET_FLAG = Int.MIN_VALUE
     private const val MAX_SMALL_OFFSET = 0x7fffffffL
 
     fun write(
@@ -1748,7 +1810,8 @@ class KotlinPackIndexerTest {
             val packDir = temp.newFolder("packout")
             git.repository.newObjectReader().use { reader ->
                 org.eclipse.jgit.internal.storage.pack.PackWriter(git.repository).use { writer ->
-                    val refs = git.repository.refDatabase.refs.map { it.objectId }
+                    // preparePack takes Sets, not Lists — hence the toSet().
+                    val refs = git.repository.refDatabase.refs.map { it.objectId }.toSet()
                     writer.preparePack(org.eclipse.jgit.lib.NullProgressMonitor.INSTANCE, refs, emptySet())
                     val out = File(packDir, "out.pack")
                     out.outputStream().use { writer.writePack(
@@ -1817,6 +1880,27 @@ class KotlinPackIndexerTest {
                 objects,
                 null,
             )
+        }
+    }
+
+    /**
+     * Cancelling a sync interrupts the mirror thread ([runInterruptible] in
+     * `ProtocolMirror`), but indexing is CPU and file work that no interrupt
+     * can unwind on its own — the indexer must poll the flag, or Stop would do
+     * nothing until the whole 72k-object resolve completed.
+     */
+    @Test
+    fun `an interrupted thread stops the indexer instead of finishing the pack`() {
+        val objects = temp.newFolder("objects")
+        val bytes = sha1PackBytes(fileCount = 2)
+
+        Thread.currentThread().interrupt()
+        try {
+            assertThrows(InterruptedException::class.java) {
+                KotlinPackIndexer().consume(ByteArrayInputStream(bytes), ObjectHash.SHA1, objects, null)
+            }
+        } finally {
+            Thread.interrupted() // clear the flag so later tests are unaffected
         }
     }
 }
@@ -1940,42 +2024,63 @@ class KotlinPackIndexer : PackIndexer {
         }
     }
 
-    /** Streams to disk, verifying the trailer the server computed. */
+    /**
+     * Streams to disk, verifying the trailer the server computed.
+     *
+     * The digest covers everything *except* the final `rawLength` bytes, which
+     * *are* that digest — so that many bytes are always held back in [carry]
+     * until more input proves they were content. The trailer still belongs in
+     * the file: git's own tools expect every `.pack` to end with its checksum.
+     */
     private fun writeToDisk(pack: InputStream, target: File, hash: ObjectHash): ByteArray {
         val digest = hash.newDigest()
-        val trailer = ByteArray(hash.rawLength)
-        var trailerFilled = 0
+        val carry = ByteArray(hash.rawLength)
+        var carried = 0
 
         target.outputStream().buffered().use { out ->
             val buffer = ByteArray(BUFFER)
             while (true) {
+                if (Thread.currentThread().isInterrupted) {
+                    throw InterruptedException("sync cancelled")
+                }
                 val read = pack.read(buffer)
                 if (read < 0) break
-                // The last rawLength bytes are the checksum, not pack content —
-                // so bytes are held back until enough have arrived to know which
-                // are which.
-                var consumed = 0
-                while (consumed < read) {
-                    val room = hash.rawLength - trailerFilled
-                    val take = minOf(room, read - consumed)
-                    if (trailerFilled == hash.rawLength) {
-                        digest.update(trailer, 0, 1)
-                        out.write(trailer, 0, 1)
-                        System.arraycopy(trailer, 1, trailer, 0, hash.rawLength - 1)
-                        trailerFilled--
-                        continue
-                    }
-                    System.arraycopy(buffer, consumed, trailer, trailerFilled, take)
-                    trailerFilled += take
-                    consumed += take
+
+                // Emit in bulk, not byte-at-a-time: this loop sees every byte of
+                // a transfer, and 44 MiB of single-byte digest updates is the
+                // difference between seconds and minutes on a phone.
+                val total = carried + read
+                val emit = total - hash.rawLength
+                if (emit <= 0) {
+                    System.arraycopy(buffer, 0, carry, carried, read)
+                    carried = total
+                    continue
                 }
+                val fromCarry = minOf(carried, emit)
+                if (fromCarry > 0) {
+                    digest.update(carry, 0, fromCarry)
+                    out.write(carry, 0, fromCarry)
+                    System.arraycopy(carry, fromCarry, carry, 0, carried - fromCarry)
+                    carried -= fromCarry
+                }
+                val fromBuffer = emit - fromCarry
+                if (fromBuffer > 0) {
+                    digest.update(buffer, 0, fromBuffer)
+                    out.write(buffer, 0, fromBuffer)
+                }
+                System.arraycopy(buffer, fromBuffer, carry, carried, read - fromBuffer)
+                carried = hash.rawLength
             }
+
+            if (carried != hash.rawLength) throw IOException("pack ended before its checksum")
+
+            // The held-back checksum is written last, undigested — the file must
+            // be byte-identical to what the server sent.
+            out.write(carry, 0, carried)
         }
 
-        if (trailerFilled != hash.rawLength) throw IOException("pack ended before its checksum")
-
         val computed = digest.digest()
-        if (!computed.contentEquals(trailer)) {
+        if (!computed.contentEquals(carry)) {
             throw IOException("pack checksum mismatch: the transfer was corrupted")
         }
         return computed
@@ -2034,7 +2139,14 @@ class KotlinPackIndexer : PackIndexer {
             crc.update(compressed)
 
             entries += Entry(offset, type, dataOffset, baseOffset, baseId, crc.value.toInt())
-            if (index % PROGRESS_EVERY == 0) progress?.update("Indexing objects", index, count)
+            if (index % PROGRESS_EVERY == 0) {
+                // RandomAccessFile work is not interruptible on its own; the
+                // flag must be polled or cancellation cannot reach this phase.
+                if (Thread.currentThread().isInterrupted) {
+                    throw InterruptedException("sync cancelled")
+                }
+                progress?.update("Indexing objects", index, count)
+            }
         }
         progress?.update("Indexing objects", count, count)
         return entries
@@ -2128,6 +2240,9 @@ class KotlinPackIndexer : PackIndexer {
             idToOffset[hash.toHex(id)] = entry.offset
             indexed += IndexedObject(id, entry.offset, entry.crc32)
             if (index % PROGRESS_EVERY == 0) {
+                if (Thread.currentThread().isInterrupted) {
+                    throw InterruptedException("sync cancelled")
+                }
                 progress?.update("Resolving deltas", index, entries.size)
             }
         }
@@ -2177,7 +2292,7 @@ grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' \
   app/build/test-results/testDebugUnitTest/TEST-de.nereide.strohhalm.domain.git.KotlinPackIndexerTest.xml
 ```
 
-Expected: PASS, `tests="4" ... failures="0" errors="0"`.
+Expected: PASS, `tests="5" ... failures="0" errors="0"`.
 
 If `ref-delta` bases resolve out of order, note that a non-thin pack always places a base before its deltas — so the failure indicates the pack was thin, which the fetch request must never request.
 
@@ -2461,6 +2576,23 @@ class MirrorRepositoryTest {
 
         assertTrue(mirror.localRefs().containsKey("refs/heads/legacy"))
     }
+
+    /**
+     * Git resolves loose over packed. A JGit clone writes `packed-refs` once and
+     * later fetches update refs loose, so the packed entry is the *stale* one —
+     * preferring it would offer outdated haves on every incremental sync.
+     */
+    @Test
+    fun `a loose ref shadows its packed entry, as git itself resolves them`() {
+        val mirror = repo()
+        mirror.initialise(ObjectHash.SHA1)
+        File(mirror.gitDir, "packed-refs")
+            .writeText("${"a".repeat(40)} refs/heads/main\n")
+        File(mirror.gitDir, "refs/heads").mkdirs()
+        File(mirror.gitDir, "refs/heads/main").writeText("${"b".repeat(40)}\n")
+
+        assertEquals("b".repeat(40), mirror.localRefs()["refs/heads/main"])
+    }
 }
 ```
 
@@ -2542,11 +2674,13 @@ class MirrorRepository(val gitDir: File) {
 
         // A mirror created by the JGit engine may hold refs loose. Both must be
         // read, or an incremental fetch would offer no haves and re-download.
+        // Loose wins over packed — git's own precedence, and the packed entry
+        // is the stale one after a JGit fetch updated a ref loose.
         val refsRoot = File(gitDir, "refs")
         if (refsRoot.isDirectory) {
             refsRoot.walkTopDown().filter { it.isFile }.forEach { file ->
                 val name = file.relativeTo(gitDir).path.replace(File.separatorChar, '/')
-                refs.putIfAbsent(name, file.readText().trim())
+                refs[name] = file.readText().trim()
             }
         }
         return refs
@@ -2597,7 +2731,7 @@ grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' \
   app/build/test-results/testDebugUnitTest/TEST-de.nereide.strohhalm.domain.git.MirrorRepositoryTest.xml
 ```
 
-Expected: PASS, `tests="6" ... failures="0" errors="0"`.
+Expected: PASS, `tests="7" ... failures="0" errors="0"`.
 
 - [ ] **Step 5: Commit**
 
@@ -2766,17 +2900,42 @@ class ProtocolMirror(
             capture = false,
             timeout = TIMEOUT,
         ).use { channel ->
-            channel.open()
-            channel.rejection?.let { return MirrorOutcome.Failure(it) }
+            try {
+                channel.open()
+            } catch (t: Throwable) {
+                // A refused host key surfaces as a bare transport failure —
+                // SSHD closes the session without propagating the cause — so
+                // the recorded reason must be preferred over whatever the
+                // library threw, exactly as the JGit engine did.
+                channel.rejection?.let { return MirrorOutcome.Failure(it) }
+                throw t
+            }
 
             val protocol = UploadPackV2(channel.input, channel.output)
             val caps = protocol.readAdvertisement()
-            val refs = protocol.lsRefs(caps)
-            if (refs.isEmpty()) return MirrorOutcome.Success(0L, 0)
-
             if (!mirror.exists()) mirror.initialise(caps.objectHash)
+
+            val refs = protocol.lsRefs(caps)
+            if (refs.isEmpty()) {
+                // An empty remote is a valid mirror with nothing in it. The
+                // layout above was still written, so the folder exists and a
+                // later first commit upstream syncs into it as a plain fetch.
+                return MirrorOutcome.Success(sizeBytes(destination), 0)
+            }
+
             val haves = mirror.localRefs().values.distinct()
             val wants = refs.map { it.objectId }.distinct()
+
+            // Steady state: nothing moved upstream since the last sync. Skip
+            // the fetch entirely — with `done` negotiation a server always
+            // sends a pack section, and at the 15-minute floor an unconditional
+            // fetch would accumulate tens of thousands of empty packs a year,
+            // each one another file for git to open.
+            val known = haves.toHashSet()
+            if (wants.all { it in known }) {
+                mirror.writeRefs(refs)
+                return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
+            }
 
             val pack = protocol.fetch(caps, wants, haves) { line ->
                 progress?.update(line, 0, 0)
@@ -2880,6 +3039,7 @@ The strongest evidence available without a device: mirror a real SHA-256 reposit
 package de.nereide.strohhalm.domain.git
 
 import de.nereide.strohhalm.domain.MirrorOutcome
+import de.nereide.strohhalm.domain.SyncErrorCode
 import kotlinx.coroutines.runBlocking
 import org.apache.sshd.server.Environment
 import org.apache.sshd.server.ExitCallback
@@ -2937,7 +3097,12 @@ class MirrorEndToEndTest {
     fun startServer() {
         assumeTrue("needs git with SHA-256 support", gitSupportsSha256())
 
-        clientKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        // RSA, not Ed25519: sshd 2.14 supports Ed25519 only through the
+        // net.i2p EdDSA provider (the app's real keys), not the JDK's own
+        // EdEC keys — those arrive in sshd 2.15. The existing
+        // JGitMirrorDiagnosticHangTest harness uses RSA for the same reason.
+        clientKey = KeyPairGenerator.getInstance("RSA")
+            .apply { initialize(2048) }.generateKeyPair()
 
         server = SshServer.setUpDefaultServer().apply {
             port = 0
@@ -2975,7 +3140,18 @@ class MirrorEndToEndTest {
 
                 override fun start(session: ChannelSession, env: Environment) {
                     val path = command.substringAfter(' ').trim().trim('\'')
-                    val started = ProcessBuilder("git", "upload-pack", path).start()
+                    val started = ProcessBuilder("git", "upload-pack", path)
+                        .apply {
+                            // Forward the channel's env exactly as a real sshd
+                            // with `AcceptEnv GIT_PROTOCOL` would. Without it,
+                            // upload-pack speaks v0 and the engine (correctly)
+                            // refuses — proving here that the client actually
+                            // sends the variable.
+                            env.env["GIT_PROTOCOL"]?.let {
+                                environment()["GIT_PROTOCOL"] = it
+                            }
+                        }
+                        .start()
                     process = started
                     pump(input, started.outputStream, closeTarget = true)
                     pump(started.inputStream, out, closeTarget = false)
@@ -3022,7 +3198,11 @@ class MirrorEndToEndTest {
         git("tag", "v1", cwd = work)
 
         val bare = temp.newFolder("remote.git")
-        git("clone", "--bare", "--object-format=sha256", work.absolutePath, bare.absolutePath, cwd = temp.root)
+        // No --object-format here: git clone does not accept the flag (only
+        // init does), and a local bare clone inherits sha256 from its source —
+        // verified against git 2.53. The assertion below guards the inheritance.
+        git("clone", "--bare", work.absolutePath, bare.absolutePath, cwd = temp.root)
+        assertEquals("sha256", git("rev-parse", "--show-object-format", cwd = bare).trim())
         return bare
     }
 
@@ -3035,8 +3215,15 @@ class MirrorEndToEndTest {
         val outcome = ProtocolMirror(keyPairProvider = { clientKey })
             .sync(url, destination, pinnedFingerprint = null)
 
-        // No pin, so the first attempt must be refused rather than trusted.
+        // No pin, so the first attempt must be refused rather than trusted —
+        // and refused *for the right reason*. SSHD reports a rejected host key
+        // as a bare transport failure, so this assertion is what proves the
+        // recorded refusal is preferred over the library's own exception.
         assertTrue("unpinned host must be refused", outcome is MirrorOutcome.Failure)
+        assertEquals(
+            SyncErrorCode.HOST_KEY_MISMATCH,
+            (outcome as MirrorOutcome.Failure).error.code,
+        )
 
         // Pin what the server actually presented, then mirror for real.
         val fingerprint = ProtocolMirror(keyPairProvider = { clientKey })
@@ -3214,6 +3401,8 @@ Two halves, one commit each: switch `AppContainer` over, verify on hardware, the
 
 **Files:**
 - Modify: `app/src/main/java/de/nereide/strohhalm/AppContainer.kt`
+- Modify: `app/src/main/java/de/nereide/strohhalm/StrohhalmApp.kt` — calls `AndroidSystemReader.install()`
+- Modify: `app/src/main/java/de/nereide/strohhalm/domain/SyncError.kt` — imports a JGit exception type
 - Delete: `app/src/main/java/de/nereide/strohhalm/domain/JGitMirror.kt`
 - Delete: `app/src/main/java/de/nereide/strohhalm/domain/AndroidSystemReader.kt`
 - Delete: `app/src/test/java/de/nereide/strohhalm/domain/JGitMirrorDiagnosticHangTest.kt`
@@ -3301,12 +3490,25 @@ git rm app/src/main/java/de/nereide/strohhalm/domain/JGitMirror.kt \
        app/src/test/java/de/nereide/strohhalm/domain/JGitMirrorProgressTest.kt
 ```
 
-In `app/build.gradle.kts`, remove `implementation(libs.jgit)` and `implementation(libs.jgit.ssh.apache)`. **Keep `testImplementation(libs.jgit)`** — Tasks 9 and 14 use JGit to build fixtures, which the project explicitly permits.
+Two files in `src/main` still reference JGit and **must be edited in the same
+step, or the build breaks** the moment the dependency is gone:
+
+- `StrohhalmApp.kt`: remove the `AndroidSystemReader.install()` call (line 25)
+  and its import. `SshdEnvironment.install(filesDir)` **stays** — that one is
+  MINA's, not JGit's.
+- `SyncError.kt`: remove `import org.eclipse.jgit.errors.NoRemoteRepositoryException`
+  and the `t is NoRemoteRepositoryException ->` branch from `classify`. No test
+  changes needed: `SyncErrorsTest` keeps compiling because JGit remains a test
+  dependency, and its `NoRemoteRepositoryException` case still passes because the
+  exception's message contains "not found", which `classifyByMessage` already
+  maps to `REMOTE_ERROR`.
+
+In `app/build.gradle.kts`, remove `implementation(libs.jgit)` and `implementation(libs.jgit.ssh.apache)`. **Keep `testImplementation(libs.jgit)`** (already present, line 149) — Tasks 9 and 14 use JGit to build fixtures, which the project explicitly permits.
 
 In `gradle/libs.versions.toml`, leave the `jgit` entries in place; they are still needed for the test-only dependency.
 
 Update `CLAUDE.md`:
-- The rule "`JGitMirror.kt` is the only file in `src/main` that may import JGit or MINA SSHD" becomes "the `domain/git` package is the only place in `src/main` that may import MINA SSHD; JGit is a test-only dependency."
+- The rule "`JGitMirror.kt` is the only file in `src/main` that may import JGit or MINA SSHD" becomes "the `domain/git` package — plus the pre-existing `SshdEnvironment.kt` — is the only place in `src/main` that may import MINA SSHD; JGit is a test-only dependency."
 - Keep the `isMinifyEnabled = false` entry, narrowing its reason to MINA SSHD's `ServiceLoader` use.
 - Keep the `SshdEnvironment.install` entry unchanged — it is still required, for the same reason.
 - Remove the "Never read a remote stream to EOF without a deadline" entry and replace it with a note that the engine reads stderr on the live channel, which is what made the diagnostic probe unnecessary.
@@ -3335,5 +3537,5 @@ git commit -m "refactor(git): drop JGit from the app, keeping it as a test fixtu
 
 Two things must be checked by hand and cannot be faked:
 
-- **The live SHA-256 remote.** Write a `Live*Test.kt` in the working tree — it is gitignored, and must never be committed, since it names a real remote and an operator's own key. Run with `LIVE_CLONE=1`.
+- **The live SHA-256 remote.** Write a `Live*Test.kt` in the working tree — it is gitignored, and must never be committed, since it names a real remote and an operator's own key. Run with `LIVE_CLONE=1`. Note the engine reaches protocol v2 via the `GIT_PROTOCOL=version=2` channel env var; hosted forges accept it, but a self-managed OpenSSH server needs `AcceptEnv GIT_PROTOCOL` in its `sshd_config` — without it the engine reports a clear v0 refusal rather than mirroring.
 - **The device checks in Task 15, step 3.** In particular the 44 MiB repository, which has never completed a mirror on any engine.
