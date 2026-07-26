@@ -65,14 +65,21 @@ extra to hash.
 confidently describe a file that no longer exists. A sidecar cannot outlive its
 archive. It also avoids a schema migration.
 
-**A failed sync abandons the share.** The alternative — archive the previous
-good state and say so — is defensible, because a failed fetch renames no pack
-into place and updates no refs, so the mirror is still valid and merely older.
-It was rejected in favour of surfacing the sync error. *Asking* the user which
-they want is a reasonable third option and may be adopted later; it was deferred
-only because a modal that appears at the end of a long wait, potentially after
-the phone has been put down, is awkward. Changing this decision affects one
-branch in the ViewModel.
+**A failed sync offers a choice rather than deciding.** When the sync being
+waited on fails, the waiting state does not silently abandon the share and does
+not silently archive a stale mirror. It reports what happened and offers both
+ways forward: **Retry sync**, or **Share anyway**.
+
+That is possible because a failed fetch leaves the mirror *valid*. Packs are
+written to a temporary file and renamed only on success, and refs are written
+only after the pack lands, so a failure updates nothing. The mirror is the
+previous good state — complete, consistent, merely older — and an archive of it
+is a real backup, not a damaged one. Refusing to share it would be throwing away
+something useful because something unrelated went wrong.
+
+Presenting it inline avoids what made the modal version unattractive: nothing
+pops up over the screen at the end of a long wait. The choice sits in the
+waiting area, and is still there whenever the user next looks at the phone.
 
 ## Architecture
 
@@ -204,7 +211,28 @@ state:
 | Sync running | "Waiting for the sync to finish", showing that sync's live progress through the existing `SyncProgressBar` |
 | Back | Share abandoned. Nothing is built; the sync is untouched and keeps running |
 | Sync succeeds | Proceeds automatically to archiving, with progress and Stop |
-| Sync fails or is cancelled | Share abandoned, the sync's error shown through the existing `SyncErrorText` mapping |
+| Sync **fails** | Stops waiting and shows the error, with two actions: **Retry sync** and **Share anyway** |
+| Sync **cancelled** | Stops waiting and says the sync was stopped — not an error — with the same two actions |
+
+The failure branch is the one worth being precise about, because "the sync
+failed" and "the backup is unusable" are different statements and the UI must
+not conflate them:
+
+- The error text comes from the existing `SyncErrorText` mapping, so a failed
+  sync reads identically here and on the rest of the detail screen.
+- **Retry sync** starts a sync and returns to waiting. The share is still
+  pending, so a successful retry flows straight on to archiving — which is the
+  whole point of offering it here rather than sending the user back to the
+  Sync now button.
+- **Share anyway** archives the mirror as it stands. Alongside it the UI states
+  when that state was last successfully synced, from `Repo.lastSyncAt`, because
+  "share the older version" is only a real choice if the user can see how much
+  older.
+- **Cancellation is not a failure.** The project already holds that a stopped
+  sync "is recorded as stopped, not as a failure" and is "never worth an
+  alarming message"; this screen follows that. Same two actions, neutral
+  wording, no error styling.
+- Back from any of these abandons the share, exactly as during the wait.
 
 The wait observes `SyncRunner.running`, which is process-wide rather than
 per-repo. That is a deliberate over-approximation: it may wait for a sync of a
@@ -261,10 +289,20 @@ JVM unit tests for everything except the share sheet.
   a share sheet survives even when superseded; and it becomes prunable once the
   grace period has elapsed. Time is injected, so the grace period is tested
   without waiting for it.
+- **The share state machine** — driven by a fake `SyncRunner` flow, since every
+  branch is a state transition and none of them needs Android: a sync in flight
+  enters waiting; success flows on to archiving; failure surfaces the error with
+  both actions available; **Retry sync** returns to waiting and a subsequent
+  success still archives, proving the share stays pending across a retry;
+  **Share anyway** archives the mirror untouched; cancellation reaches the same
+  two actions without being styled as an error; and Back from any state leaves
+  no archive behind and does not disturb the running sync.
 - **End to end** — archive a real mirror, unpack it, and run `git fsck --strict`
   and `git clone` on the result. Real git validating the output is the only
   thing that proves the archive is restorable, and it is the same technique
-  `MirrorEndToEndTest` already uses.
+  `MirrorEndToEndTest` already uses. Run once over a mirror left by a *failed*
+  fetch as well, since "the older state is still a valid repository" is the
+  claim the **Share anyway** action rests on.
 
 **Needs a device, cannot be faked:** the `FileProvider` authority resolving, the
 share sheet appearing, and a receiving app actually reading the URI.
@@ -302,8 +340,10 @@ Each step is a task with its own test cycle, in TDD order.
    respecting the in-flight share and the grace period.
 5. Free-space precheck and `SyncError` mapping.
 6. `FileProvider`, manifest entry, `file_paths.xml`, `ACTION_SEND`.
-7. `RepoDetailViewModel` — share state machine including the waiting state.
-8. `RepoDetailScreen` — Share action, waiting UI, progress and Stop, strings.
+7. `RepoDetailViewModel` — the share state machine: waiting, archiving, the
+   failure branch with Retry sync and Share anyway, and Back from each.
+8. `RepoDetailScreen` — Share action, waiting UI, the failure actions, progress
+   and Stop, strings.
 9. End-to-end test: archive a mirror, unpack, `git fsck` and `git clone`.
 10. Device check: the share sheet, a real receiving app, and a large mirror.
 
