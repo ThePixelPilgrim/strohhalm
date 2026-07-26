@@ -38,6 +38,16 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <provider
+            android:name=".ArchiveFileProvider"
+            android:authorities="de.nereide.strohhalm.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

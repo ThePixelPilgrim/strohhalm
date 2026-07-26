@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+      Scoped to archives/ alone. The cache holds nothing else worth exposing,
+      and a provider that serves the whole cache directory is a provider that
+      will one day serve something it should not.
+    -->
+    <cache-path name="archives" path="archives/" />
+</paths>
