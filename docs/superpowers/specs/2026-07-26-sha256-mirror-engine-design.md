@@ -1,7 +1,7 @@
 # Strohhalm — SHA-256 mirror engine
 
 **Date:** 2026-07-26
-**Status:** draft, awaiting review
+**Status:** approved, planned in `docs/superpowers/plans/2026-07-26-sha256-mirror-engine.md`
 **Supersedes:** §"Git and SSH engine: JGit + Apache MINA SSHD" in
 `2026-07-25-strohhalm-design.md`. Everything else in that spec stands.
 
