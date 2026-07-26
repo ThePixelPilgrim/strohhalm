@@ -73,3 +73,83 @@ object PktLine {
         return buffer
     }
 }
+
+/**
+ * The server refused, and said why on band 3. Carries the message verbatim so
+ * the UI can show a git host's own words rather than a generic failure.
+ */
+class SidebandException(val serverMessage: String) :
+    IOException("the server said: $serverMessage")
+
+/**
+ * Presents band 1 of a sideband-encoded section as a plain [InputStream].
+ *
+ * Band 2 is progress text and is handed to [onProgress]; band 3 is fatal and
+ * becomes a [SidebandException]. The stream ends at the section's flush packet,
+ * which is why the pack data can be handed straight to the indexer without the
+ * indexer knowing anything about pkt-line.
+ */
+class SidebandInputStream(
+    private val input: InputStream,
+    private val onProgress: (String) -> Unit,
+) : InputStream() {
+
+    private var buffer: ByteArray = ByteArray(0)
+    private var position = 0
+    private var finished = false
+
+    override fun read(): Int {
+        val one = ByteArray(1)
+        return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 0xff
+    }
+
+    override fun read(destination: ByteArray, offset: Int, length: Int): Int {
+        if (!fill()) return -1
+        val n = minOf(length, buffer.size - position)
+        System.arraycopy(buffer, position, destination, offset, n)
+        position += n
+        return n
+    }
+
+    /** True when [buffer] holds unread band-1 bytes. */
+    private fun fill(): Boolean {
+        while (position >= buffer.size) {
+            if (finished) return false
+            when (val pkt = PktLine.read(input)) {
+                is Pkt.Flush, is Pkt.ResponseEnd -> {
+                    finished = true
+                    return false
+                }
+
+                is Pkt.Delim -> Unit // section separator; nothing to emit
+
+                is Pkt.Data -> {
+                    if (pkt.bytes.isEmpty()) continue
+                    val payload = pkt.bytes.copyOfRange(1, pkt.bytes.size)
+                    when (pkt.bytes[0].toInt()) {
+                        BAND_DATA -> {
+                            buffer = payload
+                            position = 0
+                        }
+
+                        BAND_PROGRESS ->
+                            String(payload, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                                ?.let(onProgress)
+
+                        BAND_ERROR ->
+                            throw SidebandException(String(payload, Charsets.UTF_8).trim())
+
+                        else -> throw IOException("unknown sideband ${pkt.bytes[0].toInt()}")
+                    }
+                }
+            }
+        }
+        return true
+    }
+
+    private companion object {
+        const val BAND_DATA = 1
+        const val BAND_PROGRESS = 2
+        const val BAND_ERROR = 3
+    }
+}
