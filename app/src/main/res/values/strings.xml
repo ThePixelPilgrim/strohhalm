@@ -111,4 +111,17 @@
     <string name="settings_key_regenerate_body">A new key is generated and the current one stops working immediately. Every server has to be updated with the new public key before backups resume.</string>
     <string name="settings_notify_title">Notify when a backup fails</string>
     <string name="action_stop_sync">Stop</string>
+
+    <!-- Share backup -->
+    <string name="share_backup">Share backup</string>
+    <string name="share_waiting_sync">Waiting for the sync to finish…</string>
+    <string name="share_never_synced">Nothing has been backed up yet.</string>
+    <string name="share_packing">Packing… %1$d of %2$d files</string>
+    <string name="share_sync_stopped">The sync was stopped.</string>
+    <string name="share_retry_sync">Retry sync</string>
+    <string name="share_sync_now">Sync now</string>
+    <string name="share_anyway">Share anyway</string>
+    <string name="share_anyway_dated">Share the copy from %1$s</string>
+    <string name="share_unencrypted_warning">The archive is not encrypted. Anyone you send it to can read the whole repository.</string>
+    <string name="share_chooser_title">Share backup</string>
 </resources>

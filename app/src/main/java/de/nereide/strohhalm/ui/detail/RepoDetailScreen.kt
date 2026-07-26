@@ -2,8 +2,10 @@ package de.nereide.strohhalm.ui.detail
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.text.format.DateUtils
 import android.text.format.Formatter
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,8 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
@@ -63,6 +68,7 @@ fun RepoDetailScreen(
     val refs by viewModel.refs.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
     val pendingHostKey by viewModel.pendingHostKey.collectAsStateWithLifecycle()
+    val shareState by viewModel.shareState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var alsoDeleteFiles by remember { mutableStateOf(false) }
@@ -89,6 +95,12 @@ fun RepoDetailScreen(
                             Icon(Icons.Filled.Refresh, stringResource(R.string.list_sync_now))
                         }
                     }
+                    IconButton(onClick = { viewModel.share() }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = stringResource(R.string.share_backup),
+                        )
+                    }
                     IconButton(onClick = { confirmDelete = true }) {
                         Icon(Icons.Filled.Delete, stringResource(R.string.delete))
                     }
@@ -105,6 +117,55 @@ fun RepoDetailScreen(
                 .padding(16.dp)
         ) {
             SyncProgressBar(progress, onCancel = viewModel::cancelSync)
+
+            when (val state = shareState) {
+                is ShareState.Idle -> Unit
+
+                is ShareState.Waiting -> ShareNotice(
+                    text = if (state.neverSynced) {
+                        stringResource(R.string.share_never_synced)
+                    } else {
+                        stringResource(R.string.share_waiting_sync)
+                    },
+                    primary = if (state.neverSynced) {
+                        stringResource(R.string.share_sync_now) to viewModel::retrySync
+                    } else {
+                        null
+                    },
+                    onDismiss = viewModel::cancelShare,
+                )
+
+                is ShareState.Packing -> ShareNotice(
+                    text = stringResource(R.string.share_packing, state.completed, state.total),
+                    primary = null,
+                    onDismiss = viewModel::cancelShare,
+                )
+
+                is ShareState.Blocked -> ShareBlocked(
+                    state = state,
+                    lastSyncAt = repo?.lastSyncAt,
+                    onRetry = viewModel::retrySync,
+                    onShareAnyway = viewModel::shareAnyway,
+                    onDismiss = viewModel::cancelShare,
+                )
+
+                is ShareState.Ready -> LaunchedEffect(state.archive) {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "de.nereide.strohhalm.fileprovider",
+                        state.archive,
+                    )
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(
+                        Intent.createChooser(send, context.getString(R.string.share_chooser_title))
+                    )
+                    viewModel.shareConsumed()
+                }
+            }
 
             syncErrorText(current.lastErrorCode)?.let { message ->
                 DiagnosticCard(
@@ -234,6 +295,70 @@ private fun Field(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = FontFamily.Monospace
         )
+    }
+}
+
+@Composable
+private fun ShareNotice(
+    text: String,
+    primary: Pair<String, () -> Unit>?,
+    onDismiss: () -> Unit,
+) {
+    // Back dismisses the share without touching the sync, which keeps running.
+    BackHandler(onBack = onDismiss)
+    Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(text)
+            Text(
+                text = stringResource(R.string.share_unencrypted_warning),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Row(modifier = Modifier.padding(top = 8.dp)) {
+                primary?.let { (label, action) ->
+                    Button(onClick = action) { Text(label) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareBlocked(
+    state: ShareState.Blocked,
+    lastSyncAt: Long?,
+    onRetry: () -> Unit,
+    onShareAnyway: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    BackHandler(onBack = onDismiss)
+    Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = if (state.cancelled) {
+                    stringResource(R.string.share_sync_stopped)
+                } else {
+                    // syncErrorText takes the *code name*, not a SyncError.
+                    syncErrorText(state.error.code.name)
+                        ?: state.error.detail.orEmpty()
+                },
+            )
+            Row(modifier = Modifier.padding(top = 8.dp)) {
+                Button(onClick = onRetry) { Text(stringResource(R.string.share_retry_sync)) }
+                if (state.canShareAnyway) {
+                    TextButton(
+                        onClick = onShareAnyway,
+                        modifier = Modifier.padding(start = 8.dp),
+                    ) {
+                        Text(
+                            lastSyncAt?.let {
+                                stringResource(R.string.share_anyway_dated, relative(it))
+                            } ?: stringResource(R.string.share_anyway)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
