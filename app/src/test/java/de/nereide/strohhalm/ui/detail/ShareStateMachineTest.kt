@@ -23,6 +23,18 @@ class ShareStateMachineTest {
         assertFalse((state as ShareState.Waiting).neverSynced)
     }
 
+    /**
+     * A running sync wins over "nothing here yet". The Sync now button only
+     * calls `launchSyncOne`, which returns at once while the runner is busy —
+     * so offering it here is offering a button that does nothing, next to a
+     * live progress bar contradicting the words above it.
+     */
+    @Test
+    fun `sharing a never-synced repository mid-sync waits for that sync`() {
+        val state = ShareRules.onShareRequested(syncing = true, everSynced = false)
+        assertEquals(ShareState.Waiting(neverSynced = false), state)
+    }
+
     @Test
     fun `sharing a never-synced repository waits, and says so`() {
         val state = ShareRules.onShareRequested(syncing = false, everSynced = false)
@@ -74,6 +86,28 @@ class ShareStateMachineTest {
     /** The share survives a retry; that is the whole reason the button is here. */
     @Test
     fun `retrying returns to waiting rather than abandoning the share`() {
-        assertEquals(ShareState.Waiting(neverSynced = false), ShareRules.onRetry(everSynced = true))
+        assertEquals(ShareState.Waiting(neverSynced = false), ShareRules.onRetry())
+    }
+
+    /** A failure to reach the remote is retried by reaching for it again. */
+    @Test
+    fun `a failed sync asks to be retried as a sync`() {
+        val blocked = ShareRules.onSyncFinished(failed = failure, cancelled = false, everSynced = true)
+            as ShareState.Blocked
+        assertEquals(ShareState.RetryAction.SYNC, blocked.retry)
+    }
+
+    /**
+     * The device was out of room, or the mirror folder went away. Fetching the
+     * remote again fixes neither, and costs the user a connection to find out.
+     */
+    @Test
+    fun `a failed archive asks to be retried as an archive`() {
+        val refusal = SyncError(SyncErrorCode.LOW_STORAGE, "needs 120 MB, 40 MB free")
+        val blocked = ShareRules.onArchiveFailed(refusal)
+        assertEquals(ShareState.RetryAction.ARCHIVE, blocked.retry)
+        assertEquals(refusal, blocked.error)
+        assertFalse("a refused archive is not a stopped sync", blocked.cancelled)
+        assertFalse("share anyway is the same pack that just failed", blocked.canShareAnyway)
     }
 }

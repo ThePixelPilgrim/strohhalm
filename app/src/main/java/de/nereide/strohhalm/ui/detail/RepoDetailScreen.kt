@@ -30,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -142,9 +143,17 @@ fun RepoDetailScreen(
                     onDismiss = viewModel::cancelShare,
                 )
 
+                // Packing a large mirror is minutes of work. Without a Stop
+                // button the only way out is the system Back gesture, which
+                // nothing on screen suggests.
                 is ShareState.Packing -> ShareNotice(
                     text = stringResource(R.string.share_packing, state.completed, state.total),
-                    primary = null,
+                    primary = stringResource(R.string.share_stop) to viewModel::cancelShare,
+                    progress = if (state.total > 0) {
+                        state.completed.toFloat() / state.total
+                    } else {
+                        null
+                    },
                     onDismiss = viewModel::cancelShare,
                 )
 
@@ -310,12 +319,22 @@ private fun ShareNotice(
     text: String,
     primary: Pair<String, () -> Unit>?,
     onDismiss: () -> Unit,
+    progress: Float? = null,
 ) {
     // Back dismisses the share without touching the sync, which keeps running.
     BackHandler(onBack = onDismiss)
     Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text)
+            // Determinate only, and only from the same two numbers the line
+            // above states: a bar that disagreed with the count would be worse
+            // than none.
+            if (progress != null) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+            }
             Text(
                 text = stringResource(R.string.share_unencrypted_warning),
                 style = MaterialTheme.typography.bodySmall,
@@ -351,7 +370,22 @@ private fun ShareBlocked(
                 },
             )
             Row(modifier = Modifier.padding(top = 8.dp)) {
-                Button(onClick = onRetry) { Text(stringResource(R.string.share_retry_sync)) }
+                // The button has to match the step that failed. After a
+                // storage refusal, "Retry sync" would open an SSH connection
+                // to the remote to fix a problem on the phone — and leave the
+                // archive, which is what the user asked for, unreachable
+                // except by starting over from the top bar.
+                when (state.retry) {
+                    ShareState.RetryAction.SYNC ->
+                        Button(onClick = onRetry) {
+                            Text(stringResource(R.string.share_retry_sync))
+                        }
+
+                    ShareState.RetryAction.ARCHIVE ->
+                        Button(onClick = onShareAnyway) {
+                            Text(stringResource(R.string.share_try_again))
+                        }
+                }
                 if (state.canShareAnyway) {
                     TextButton(
                         onClick = onShareAnyway,

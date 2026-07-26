@@ -68,6 +68,9 @@ class RepoDetailViewModel(
 
     private var packJob: Job? = null
 
+    /** See [ShareProgressGate]: cancelling the job does not silence it. */
+    private val progressGate = ShareProgressGate()
+
     fun share() {
         val current = repo.value ?: return
         val next = ShareRules.onShareRequested(
@@ -86,13 +89,18 @@ class RepoDetailViewModel(
     }
 
     fun retrySync() {
-        val current = repo.value ?: return
-        _shareState.value = ShareRules.onRetry(everSynced = current.lastSyncAt != null)
+        if (repo.value == null) return
+        _shareState.value = ShareRules.onRetry()
         syncRunner.launchSyncOne(id)
     }
 
     /** Back, or Stop while packing. Stop means stop, not pause. */
     fun cancelShare() {
+        // Before the cancel, not after: the packing thread is inside a
+        // blocking read that ignores its interrupt, so it gets to report one
+        // more entry. Without this the card would clear and immediately come
+        // back as "Packing…", stuck there for good behind a dead job.
+        progressGate.cancel()
         packJob?.cancel()
         packJob = null
         _shareState.value = ShareState.Idle
@@ -105,6 +113,10 @@ class RepoDetailViewModel(
 
     private fun pack(current: Repo) {
         val previous = packJob
+        // Supersedes the outgoing pack's generation as well as opening this
+        // one's, so a straggling report from the job cancelled on the next
+        // line cannot repaint the state this one is about to own.
+        val token = progressGate.begin()
         previous?.cancel()
         packJob = viewModelScope.launch {
             // A cancelled pack keeps the mirror lock until its own `finally`
@@ -162,7 +174,9 @@ class RepoDetailViewModel(
                                     lastSyncAt = current.lastSyncAt
                                         ?: System.currentTimeMillis(),
                                 ) { _, completed, total ->
-                                    _shareState.value = ShareState.Packing(completed, total)
+                                    if (progressGate.accepts(token)) {
+                                        _shareState.value = ShareState.Packing(completed, total)
+                                    }
                                 }
                             }
                         }
@@ -172,10 +186,11 @@ class RepoDetailViewModel(
                     .onSuccess { _shareState.value = ShareState.Ready(it) }
                     .onFailure { t ->
                         if (t is CancellationException) throw t
-                        _shareState.value = ShareState.Blocked(
-                            error = (t as? ArchiveRefused)?.error ?: SyncErrors.fromException(t),
-                            cancelled = false,
-                            canShareAnyway = false,
+                        // Packing failed, not fetching: the remote was never
+                        // touched here. Offering "Retry sync" would answer a
+                        // full cache with an SSH connection.
+                        _shareState.value = ShareRules.onArchiveFailed(
+                            (t as? ArchiveRefused)?.error ?: SyncErrors.fromException(t)
                         )
                     }
             } finally {

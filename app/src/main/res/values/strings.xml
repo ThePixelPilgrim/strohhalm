@@ -118,7 +118,11 @@
     <string name="share_never_synced">Nothing has been backed up yet.</string>
     <string name="share_packing">Packing… %1$d of %2$d files</string>
     <string name="share_sync_stopped">The sync was stopped.</string>
+    <!-- Deliberately not action_stop_sync: that one labels the sync
+         notification's action, and rewording either must not move the other. -->
+    <string name="share_stop">Stop</string>
     <string name="share_retry_sync">Retry sync</string>
+    <string name="share_try_again">Try again</string>
     <string name="share_sync_now">Sync now</string>
     <string name="share_anyway">Share anyway</string>
     <string name="share_anyway_dated">Share the copy from %1$s</string>
