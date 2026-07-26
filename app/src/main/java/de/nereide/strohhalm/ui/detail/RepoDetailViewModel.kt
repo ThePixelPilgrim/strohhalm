@@ -16,7 +16,9 @@ import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveSpace
 import de.nereide.strohhalm.domain.archive.ArchiveStore
+import de.nereide.strohhalm.domain.archive.CacheSpace
 import de.nereide.strohhalm.domain.archive.RefFingerprint
+import de.nereide.strohhalm.domain.archive.reserveOrRefuse
 import de.nereide.strohhalm.domain.git.MirrorRepository
 import de.nereide.strohhalm.ui.common.appContainer
 import kotlinx.coroutines.CancellationException
@@ -39,7 +41,7 @@ class RepoDetailViewModel(
     private val mirror: GitMirror,
     private val syncRunner: SyncRunner,
     private val archives: ArchiveStore,
-    private val allocatableBytes: suspend () -> Long,
+    private val cacheSpace: CacheSpace,
 ) : ViewModel() {
 
     val repo: StateFlow<Repo?> = repository.observe(id)
@@ -126,7 +128,10 @@ class RepoDetailViewModel(
                     val slug = ArchiveNames.slugForMirror(gitDir)
 
                     archives.existing(slug, fingerprint) ?: run {
-                        ArchiveSpace.check(current.sizeBytes, allocatableBytes())
+                        // Reserve, not merely ask: the reported figure includes
+                        // other apps' caches, which only become free space once
+                        // they are actually claimed.
+                        ArchiveSpace.reserveOrRefuse(cacheSpace, current.sizeBytes)
                             ?.let { throw ArchiveRefused(it) }
                         runInterruptible {
                             archives.build(
@@ -254,7 +259,7 @@ class RepoDetailViewModel(
                     mirror = this.appContainer().gitMirror,
                     syncRunner = this.appContainer().syncRunner,
                     archives = this.appContainer().archiveStore,
-                    allocatableBytes = this.appContainer()::allocatableCacheBytes,
+                    cacheSpace = this.appContainer().cacheSpace,
                 )
             }
         }

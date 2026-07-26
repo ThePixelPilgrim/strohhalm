@@ -16,12 +16,14 @@ import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveStore
+import de.nereide.strohhalm.domain.archive.CacheSpace
 import de.nereide.strohhalm.work.SyncForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 
 /** Service-locator container exposing the app's singletons. No Hilt. */
 interface AppContainer {
@@ -40,11 +42,10 @@ interface AppContainer {
     val applicationScope: CoroutineScope
 
     /**
-     * What the system could free for us, not merely what is unused right now.
-     * The difference is other apps' reclaimable caches; asking for the smaller
-     * figure would refuse builds the device could comfortably do.
+     * The cache allowance an archive is built against. Asking what could be
+     * freed is only half of it; see [CacheSpace] and `reserveOrRefuse`.
      */
-    suspend fun allocatableCacheBytes(): Long
+    val cacheSpace: CacheSpace
 }
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -104,17 +105,45 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     /**
-     * What the system could free for us, not merely what is unused right now.
-     * The difference is other apps' reclaimable caches; asking for the smaller
-     * figure would refuse builds the device could comfortably do.
+     * Both `StorageManager` APIs used here are API 26, which is minSdk. Each
+     * has a fallback, because a precheck that crashes is worse than one that
+     * approximates.
      *
-     * Both APIs are API 26, which is minSdk. The fallback covers a device that
-     * refuses the query rather than letting a precheck become a crash.
+     * `appContext`, never the raw `context`: `DefaultAppContainer` is a
+     * process-lifetime singleton, and capturing an Activity would leak it.
      */
-    override suspend fun allocatableCacheBytes(): Long = withContext(Dispatchers.IO) {
-        runCatching {
-            val storage = appContext.getSystemService(StorageManager::class.java)
-            storage.getAllocatableBytes(storage.getUuidForPath(appContext.cacheDir))
-        }.getOrElse { appContext.cacheDir.usableSpace }
+    override val cacheSpace: CacheSpace = object : CacheSpace {
+
+        /**
+         * What the system could free for us, not merely what is unused right
+         * now. The difference is other apps' reclaimable caches; asking for the
+         * smaller figure would refuse builds the device could comfortably do.
+         */
+        override suspend fun allocatable(): Long = withContext(Dispatchers.IO) {
+            runCatching {
+                val storage = appContext.getSystemService(StorageManager::class.java)
+                storage.getAllocatableBytes(storage.getUuidForPath(appContext.cacheDir))
+            }.getOrElse { appContext.cacheDir.usableSpace }
+        }
+
+        /**
+         * `allocateBytes` is what turns the reported figure into real free
+         * space, by clearing other apps' caches. It throws `IOException` when
+         * it cannot — that is a refusal, not a fault, so it maps to false.
+         *
+         * Any other throwable means the device would not answer at all; there
+         * we fall back to what is plainly free, which cannot over-promise.
+         */
+        override suspend fun reserve(bytes: Long): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val storage = appContext.getSystemService(StorageManager::class.java)
+                storage.allocateBytes(storage.getUuidForPath(appContext.cacheDir), bytes)
+                true
+            } catch (e: IOException) {
+                false
+            } catch (e: Throwable) {
+                appContext.cacheDir.usableSpace >= bytes
+            }
+        }
     }
 }
