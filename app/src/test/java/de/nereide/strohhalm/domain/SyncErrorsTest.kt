@@ -4,6 +4,7 @@ import org.eclipse.jgit.api.errors.TransportException
 import org.eclipse.jgit.errors.NoRemoteRepositoryException
 import org.eclipse.jgit.transport.URIish
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -65,5 +66,38 @@ class SyncErrorsTest {
         val mapped = SyncErrors.fromException(IOException("disk went sideways"))
         assertEquals(SyncErrorCode.UNKNOWN, mapped.code)
         assertEquals("disk went sideways", mapped.detail)
+    }
+
+    @Test
+    fun `the diagnostic names every class in the chain`() {
+        val e = RuntimeException("outer", IllegalStateException("inner"))
+
+        val diagnostic = SyncErrors.fromException(e).diagnostic!!
+
+        assertTrue(diagnostic.contains("java.lang.RuntimeException"))
+        assertTrue(diagnostic.contains("java.lang.IllegalStateException"))
+    }
+
+    @Test
+    fun `the diagnostic keeps each message, not just the top one`() {
+        // The failure that motivated this: a NoClassDefFoundError's message is
+        // the ONLY place the un-loadable class name appears.
+        val root = NoClassDefFoundError("Could not initialize class org.example.Boom")
+        val e = RuntimeException("remote hung up unexpectedly", root)
+
+        val diagnostic = SyncErrors.fromException(e).diagnostic!!
+
+        assertTrue(diagnostic.contains("org.example.Boom"))
+        assertTrue(diagnostic.contains("remote hung up unexpectedly"))
+    }
+
+    @Test
+    fun `the diagnostic includes the root cause stack frames`() {
+        val e = RuntimeException("outer", IllegalArgumentException("bad"))
+
+        val diagnostic = SyncErrors.fromException(e).diagnostic!!
+
+        assertTrue(diagnostic.contains("root cause stack:"))
+        assertTrue(diagnostic.contains("   at "))
     }
 }

@@ -62,12 +62,33 @@ object SyncErrors {
     }
 
     /**
-     * The exception class chain, most specific last. Preserved because a message
-     * alone often cannot distinguish an SSH negotiation failure from a plain
-     * network timeout, and the device is the only place this app can be observed.
+     * The full cause chain — class, message, and the root cause's stack frames.
+     *
+     * The class names alone proved insufficient: a chain ending in
+     * `NoClassDefFoundError <- ExceptionInInitializerError <- IllegalArgumentException`
+     * says a static initialiser threw, but not *which class* failed to load —
+     * and that name lives in the `NoClassDefFoundError`'s message, which an
+     * earlier version discarded.
+     *
+     * Verbose by design. The device is the only place this app can be observed,
+     * so the copy button has to carry everything a logcat line would.
      */
-    private fun describeChain(t: Throwable): String =
-        causeChain(t).joinToString(" <- ") { it::class.java.simpleName }
+    private fun describeChain(t: Throwable): String = buildString {
+        causeChain(t).forEachIndexed { index, cause ->
+            appendLine("${index + 1}. ${cause::class.java.name}")
+            cause.message?.takeIf { it.isNotBlank() }?.let { appendLine("   $it") }
+        }
+        val root = causeChain(t).last()
+        appendLine()
+        appendLine("root cause stack:")
+        root.stackTrace.take(MAX_FRAMES).forEach { frame -> appendLine("   at $frame") }
+        if (root.stackTrace.size > MAX_FRAMES) {
+            appendLine("   … ${root.stackTrace.size - MAX_FRAMES} more frames")
+        }
+    }.trim()
+
+    /** Enough to identify the failing initialiser without producing a wall of text. */
+    private const val MAX_FRAMES = 25
 
     private fun classify(t: Throwable): SyncError? = when {
         t is HostKeyMismatchException ->

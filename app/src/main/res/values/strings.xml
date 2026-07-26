@@ -71,6 +71,7 @@
 
     <!-- Diagnostics -->
     <string name="copy_diagnostics">Copy diagnostics</string>
+    <string name="diagnostics_more">… %1$d more lines — use Copy diagnostics</string>
 
     <!-- Sync error messages -->
     <string name="error_no_network">No network connection — the mirrors are out of date.</string>

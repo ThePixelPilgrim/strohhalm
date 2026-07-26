@@ -178,13 +178,27 @@ fun DiagnosticCard(
                     fontFamily = FontFamily.Monospace
                 )
             }
-            diagnostic?.let {
+            diagnostic?.let { full ->
+                // The full diagnostic includes a stack trace and is far too long
+                // to read on a phone. Show enough to recognise the failure; the
+                // copy button carries all of it.
+                val lines = full.lines()
+                val preview = lines.take(DIAGNOSTIC_PREVIEW_LINES).joinToString("\n")
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = it,
+                    text = preview,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace
                 )
+                if (lines.size > DIAGNOSTIC_PREVIEW_LINES) {
+                    Text(
+                        text = stringResource(
+                            R.string.diagnostics_more,
+                            lines.size - DIAGNOSTIC_PREVIEW_LINES
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = onCopy) {
@@ -193,3 +207,5 @@ fun DiagnosticCard(
         }
     }
 }
+
+private const val DIAGNOSTIC_PREVIEW_LINES = 6
