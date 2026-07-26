@@ -143,6 +143,7 @@ dependencies {
 
     implementation(libs.jgit)
     implementation(libs.jgit.ssh.apache)
+    implementation(libs.sshd.osgi)
     implementation(libs.eddsa)
 
     testImplementation(libs.junit)
