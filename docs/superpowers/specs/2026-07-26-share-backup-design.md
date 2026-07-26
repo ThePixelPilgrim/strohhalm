@@ -139,13 +139,36 @@ ref fingerprint begins `4f2a91c07b3e`, the three filenames are:
 
 ```
 yamiro-4f2a91c07b3e.zip           the archive
-yamiro-4f2a91c07b3e.zip.sha256    the sidecar: "<hex>  yamiro-4f2a91c07b3e.zip"
+yamiro-4f2a91c07b3e.zip.sha256    the sidecar
 yamiro-4f2a91c07b3e.zip.part      the build in progress, never offered
 ```
 
-The infix is the first 12 hex characters of the ref fingerprint. Encoding it in
-the name makes a cache lookup a file-existence check, and makes every *other*
-`yamiro-*.zip` identifiable as stale without reading anything.
+The sidecar carries **both** checksums, because the two questions asked of a
+cached archive are different and independent:
+
+```
+# refs 4f2a91c07b3e59d0a8c1e77b0f3d2a6c9e5b18f4c07a3e2d1b6f8095c4a7d3e21
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  yamiro-4f2a91c07b3e.zip
+```
+
+- The **archive checksum** answers *is this file intact?* It is verified before
+  the archive is offered to a share sheet, which is the whole basis for reusing
+  a build instead of repeating it.
+- The **ref fingerprint** answers *is this file current?* It is the full
+  digest, not the truncated infix, and it is what a prune decision compares
+  against.
+
+Written in that order the file remains valid input to `sha256sum -c`, which
+ignores `#` lines — so the archive can be checked with ordinary tools on the
+receiving end, not only by Strohhalm. (Verified against GNU coreutils; the
+behaviour of Android's own toybox `sha256sum` has not been checked and nothing
+in the app depends on it.)
+
+The filename infix is the first 12 characters of the same fingerprint. It is a
+**lookup hint only** — it makes finding a candidate a file-existence check
+rather than a directory scan. Every actual decision reads the sidecar, so a
+renamed or truncated filename can never make a stale archive look current. If
+the infix and the sidecar disagree, the archive is treated as stale.
 
 `share(repo)` resolves to a ready file by:
 
@@ -164,16 +187,35 @@ corruption or partial eviction after the fact.
 Re-hashing on every share costs a second or two on a large archive. It is kept
 because the whole point of reuse is that the reused file is trustworthy.
 
-### Pruning when a sync makes an archive stale
+### Pruning
 
-Waiting until the next share to notice that an archive is stale means a
-superseded archive can sit in the cache indefinitely — for a repository synced
-every 15 minutes and shared once, that is the common case, not the edge case.
+An archive is deleted actively on exactly two triggers, and never speculatively:
 
-So pruning also runs **after a sync that changed the refs**. The sync already
-holds the ref list it just wrote, so the new fingerprint costs a digest and no
-extra I/O; every `<slug>-*.zip` whose infix differs from it is superseded, and
-its sidecar with it.
+1. **The refs moved.** After a sync, the sidecar's recorded ref fingerprint no
+   longer matches the mirror's current one. That mismatch *is* the definition of
+   stale — the archive describes a state the mirror has left — and it is the
+   only evidence needed to delete it.
+2. **Android asks for space back.** `onTrimMemory` at its severe levels is a
+   request to release cached resources, and an archive is the most releasable
+   thing this app holds: fully regenerable from the mirror, at the cost of
+   rebuilding it.
+
+Waiting until the next share to notice staleness would leave a superseded
+archive in the cache indefinitely — for a repository synced every 15 minutes and
+shared once, that is the common case, not the edge case.
+
+The check is cheap. The sync already holds the ref list it just wrote, so the
+current fingerprint costs a digest and no extra I/O, and the comparison is one
+line read from each sidecar.
+
+There is also a **passive** case that is not a trigger and needs no code:
+Android deletes `cacheDir` contents on its own when storage runs low, without
+notification and without a callback to hook. The design already tolerates this —
+a missing archive simply means the next share rebuilds — and that tolerance is
+why the verify-before-reuse step is not optional. It is worth being exact here
+rather than implying an API that does not exist: there is no "your cache was
+evicted" signal on Android, and `onTrimMemory` is about memory pressure, not
+disk.
 
 This must not be observable from the UI, which constrains where it runs:
 
@@ -308,9 +350,15 @@ JVM unit tests for everything except the share sheet.
 - **`ArchiveStore`** — builds once and reuses on the second call; a tampered zip
   forces a rebuild; a changed fingerprint forces a rebuild and prunes the old
   archive.
+- **The sidecar** — round-trips both checksums; a file whose recorded ref
+  fingerprint differs from the mirror's is stale; one whose archive checksum
+  does not match the bytes on disk is rejected before any share; an archive with
+  no sidecar at all, or whose sidecar disagrees with its filename infix, is
+  treated as stale rather than trusted.
 - **Pruning** — a changed ref list removes the superseded archive and its
-  sidecar; an unchanged one removes nothing; the archive most recently handed to
-  a share sheet survives even when superseded; and it becomes prunable once the
+  sidecar; an unchanged one removes nothing; a severe trim removes archives that
+  are current too, since they are regenerable; the archive most recently handed
+  to a share sheet survives even when superseded, and becomes prunable once the
   grace period has elapsed. Time is injected, so the grace period is tested
   without waiting for it.
 - **The share state machine** — driven by a fake `SyncRunner` flow, since every
@@ -365,8 +413,9 @@ Each step is a task with its own test cycle, in TDD order.
 2. `MirrorArchiver` — zip a directory, reproducible bytes, stored packs,
    progress, interrupt-safe.
 3. `ArchiveStore` — naming, sidecar, verify, atomic rename, prune.
-4. Post-sync pruning — application-scoped, off the sync's critical path,
-   respecting the in-flight share and the grace period.
+4. Pruning — driven by a sidecar fingerprint mismatch after a sync and by
+   `onTrimMemory`, application-scoped, off the sync's critical path, respecting
+   the in-flight share and the grace period.
 5. Free-space precheck and `SyncError` mapping.
 6. `FileProvider`, manifest entry, `file_paths.xml`, `ACTION_SEND`.
 7. `RepoDetailViewModel` — the share state machine: waiting, archiving, the
