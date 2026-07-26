@@ -33,6 +33,11 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".work.SyncForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
     </application>
 
 </manifest>

@@ -37,6 +37,7 @@ class SyncRunner(
     private val repos: RepoRepository,
     private val mirror: GitMirror,
     private val scope: CoroutineScope,
+    private val foreground: ForegroundHold = NoForegroundHold,
 ) {
 
     private val _progress = MutableStateFlow<SyncProgress?>(null)
@@ -59,12 +60,17 @@ class SyncRunner(
     private fun launch(block: suspend () -> Unit) {
         if (_running.value) return
         _running.value = true
+        // Acquired before the work starts and released only when it ends:
+        // Android freezes cached processes, and a mirror of a large repository
+        // runs far longer than the user will keep the app on screen.
+        foreground.acquire()
         job = scope.launch {
             try {
                 block()
             } finally {
                 _running.value = false
                 _progress.value = null
+                foreground.release()
             }
         }
     }

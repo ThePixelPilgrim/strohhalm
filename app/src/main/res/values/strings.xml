@@ -40,6 +40,12 @@
     <string name="list_refs">%1$d refs</string>
     <string name="status_never">Never synced</string>
     <string name="status_syncing">Syncing…</string>
+    <string name="channel_sync_name">Sync progress</string>
+    <string name="channel_sync_description">Shown while repositories are being mirrored.</string>
+    <string name="channel_problems_name">Sync problems</string>
+    <string name="channel_problems_description">Warns when a backup could not run.</string>
+    <string name="notification_progress_starting">Preparing…</string>
+    <string name="notification_progress_title">Mirroring repositories</string>
     <string name="progress_of">%1$s — %2$d of %3$d</string>
     <string name="progress_indeterminate">%1$s…</string>
     <string name="status_ok">Last synced %1$s</string>

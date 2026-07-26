@@ -13,6 +13,7 @@ import de.nereide.strohhalm.domain.JGitMirror
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.SyncRunner
+import de.nereide.strohhalm.work.SyncForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -64,6 +65,11 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     override val syncRunner: SyncRunner by lazy {
-        SyncRunner(repos = repoRepository, mirror = gitMirror, scope = applicationScope)
+        SyncRunner(
+            repos = repoRepository,
+            mirror = gitMirror,
+            scope = applicationScope,
+            foreground = SyncForegroundService.hold(appContext),
+        )
     }
 }
