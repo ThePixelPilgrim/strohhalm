@@ -213,10 +213,10 @@ receiver would collide on one file; here they cannot, by construction.
    filename safe to use as an index — a truncated match narrows the search, it
    does not decide.
 3. Otherwise building to `<name>.zip.part`, flushing to disk, hashing, writing
-   the sidecar, then **renaming atomically** into place. The superseded archive
-   is removed under the same rules as any other prune (below), not by a separate
-   blanket delete — a rebuild is trigger 1, "the refs moved", and it does not
-   get to ignore an in-flight share.
+   the sidecar, then **renaming atomically** into place. Removing the superseded
+   archive is the ordinary prune below, on the ordinary condition — a rebuild
+   happens precisely *because* the refs moved, so no separate deletion rule is
+   needed and none is added.
 
 The archive contains exactly one top-level directory, `<slug>.git`, holding the
 bare repository. So `unzip` followed by `git clone yamiro.git` restores it,
@@ -247,9 +247,7 @@ An archive is deleted actively on exactly two triggers, and never speculatively:
    This trigger removes **current** archives too, not only stale ones. An
    archive is the most releasable thing this app holds — fully regenerable from
    the mirror, at the cost of rebuilding it — and when the system says it needs
-   memory back, keeping a convenience cache is not a defensible use of it. The
-   in-flight exception below still applies: not even this deletes a file another
-   app is reading.
+   memory back, keeping a convenience cache is not a defensible use of it.
 
 Waiting until the next share to notice staleness would leave a superseded
 archive in the cache indefinitely — for a repository synced every 15 minutes and
@@ -281,19 +279,28 @@ This must not be observable from the UI, which constrains where it runs:
   to delete is swallowed — a leftover file is worth zero user-facing noise, and
   the next share prunes it anyway.
 
-**The archive currently being shared is never pruned.** An `ACTION_SEND` grant
-stays readable until the receiving activity finishes, and a receiver that
-streams rather than copies — a slow upload, say — is still reading the file
-minutes later. Deleting it mid-read produces a corrupt transfer in *another*
-app, which is both the worst place for it to surface and the hardest for the
-user to attribute.
+**The ref checksum is the only gate.** There is no grace period, no timer, and
+no "most recently shared" exception. If the sidecar's fingerprint no longer
+matches the mirror, the archive goes; if it matches, the archive stays. Nothing
+else is consulted.
 
-Two rules prevent it. `ArchiveStore` keeps the path most recently handed to a
-share sheet, and skips it. Beyond that, an archive is only pruned once a
-**grace period** has passed since it was last shared; the period exists because
-there is no reliable signal for "the receiver is finished", so time is the only
-honest proxy. A stale archive surviving one extra sync cycle costs disk; one
-deleted too early costs a broken transfer.
+An earlier draft protected a recently shared archive with a timed grace period,
+on the reasoning that deleting a file mid-read would corrupt a transfer inside
+another app. That reasoning was wrong about the platform. Android is POSIX:
+`unlink` on a file that another process holds open does not free the data. The
+receiver's file descriptor keeps the inode alive until it closes, so a share
+already reading the archive reads it to completion regardless of when we delete
+the directory entry.
+
+The exposure is therefore only the window between the grant being issued and the
+receiver actually calling `openFileDescriptor` — normally milliseconds, and only
+reachable at all if a sync happens to complete *and* move the refs inside it.
+A timer defending a window that narrow is not worth the state it costs, and
+"gated by the ref checksum, nothing else" is a rule that can be held in the head
+and verified by reading one function.
+
+The same applies to trigger 2: a severe trim deletes without exception, for the
+same reason it safely can.
 
 ### The waiting state
 
@@ -416,7 +423,9 @@ refuse builds the device could comfortably do.
 
 The archive is close to the mirror's own size, since pack files — nearly all of
 the bytes — are stored rather than re-deflated. The required figure is therefore
-`sizeBytes` plus a margin for zip overhead and the text files.
+`sizeBytes + 5% + 10 MiB`. The percentage covers zip per-entry overhead, which
+scales with file count; the flat cushion keeps a tiny repository from being
+judged against a percentage of almost nothing.
 
 ## Testing
 
@@ -441,11 +450,10 @@ JVM unit tests for everything except the share sheet.
   moves **no** refs reuses the existing archive rather than rebuilding it under
   a new date.
 - **Pruning** — a changed ref list removes the superseded archive and its
-  sidecar; an unchanged one removes nothing; a severe trim removes archives that
-  are current too, since they are regenerable; the archive most recently handed
-  to a share sheet survives even when superseded, and becomes prunable once the
-  grace period has elapsed. Time is injected, so the grace period is tested
-  without waiting for it.
+  sidecar; an unchanged one removes nothing, *including* one that was just
+  shared, since sharing confers no protection; and a severe trim removes
+  archives that are current too, since they are regenerable. No clock is
+  involved, so none needs injecting.
 - **The share state machine** — driven by a fake `SyncRunner` flow, since every
   branch is a state transition and none of them needs Android: a sync in flight
   enters waiting; success flows on to archiving; failure surfaces the error with
@@ -464,7 +472,11 @@ JVM unit tests for everything except the share sheet.
   thing that proves the archive is restorable, and it is the same technique
   `MirrorEndToEndTest` already uses. Run once over a mirror left by a *failed*
   fetch as well, since "the older state is still a valid repository" is the
-  claim the **Share anyway** action rests on.
+  claim the **Share anyway** action rests on. The same test runs
+  `sha256sum -c` against the sidecar, shelling out exactly as the mirror tests
+  shell out to `git`: the sidecar's whole purpose is to be checkable by ordinary
+  tools on the receiving end, and only a real checksum tool can prove that. A
+  Kotlin-only check would only prove our reader agrees with our writer.
 
 **Needs a device, cannot be faked:** the `FileProvider` authority resolving, the
 share sheet appearing, and a receiving app actually reading the URI.
@@ -480,10 +492,12 @@ share sheet appearing, and a receiving app actually reading the URI.
   `cacheDir` — the current one — because a sync that moves the refs prunes its
   predecessor. Pruning stays per-repo rather than global, since keeping the
   latest archive is precisely what makes reuse work.
-- **A shared archive outlives its usefulness by the grace period.** The window
-  is deliberate: there is no signal for "the receiving app has finished reading
-  the URI", so the alternative to waiting is deleting a file out from under an
-  in-flight transfer.
+- **A share can be cut off in one narrow window.** If a sync completes and moves
+  the refs between the share sheet issuing its grant and the receiving app
+  opening the file, that app sees the archive vanish. Once it has the descriptor
+  open, POSIX `unlink` semantics make deletion harmless. The window is
+  milliseconds wide and needs a sync to land inside it; defending it with a
+  timer was judged not worth the state.
 - **Peak storage.** Building needs roughly the mirror's size free in internal
   storage, which on a device with a large mirror on an SD card may be the
   binding constraint. The precheck reports it rather than failing late.
@@ -499,8 +513,7 @@ Each step is a task with its own test cycle, in TDD order.
    progress, interrupt-safe.
 3. `ArchiveStore` — naming, sidecar, verify, atomic rename, prune.
 4. Pruning — driven by a sidecar fingerprint mismatch after a sync and by
-   `onTrimMemory`, application-scoped, off the sync's critical path, respecting
-   the in-flight share and the grace period.
+   `onTrimMemory`, application-scoped, off the sync's critical path.
 5. Free-space precheck and `SyncError` mapping.
 6. `FileProvider` with a display-name override, manifest entry,
    `file_paths.xml`, `ACTION_SEND`.
