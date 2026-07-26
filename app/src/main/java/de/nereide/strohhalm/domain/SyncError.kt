@@ -49,6 +49,16 @@ class HostKeyMismatchException(
 ) : Exception("host key mismatch: expected $stored, got $presented")
 
 /**
+ * The SSH handshake succeeded but the server refused the repository, explaining
+ * itself on stderr — where JGit's pack transport cannot see it.
+ */
+class ProbeRejectedException(
+    val fingerprint: String,
+    val serverMessage: String,
+    cause: Throwable,
+) : Exception("the server said: $serverMessage", cause)
+
+/**
  * Translates library exceptions into [SyncError]. This is the single boundary
  * where JGit and MINA SSHD exception types are allowed to be inspected; nothing
  * above the domain layer ever sees a `TransportException`.
@@ -93,6 +103,9 @@ object SyncErrors {
     private const val MAX_FRAMES = 25
 
     private fun classify(t: Throwable): SyncError? = when {
+        t is ProbeRejectedException ->
+            SyncError(SyncErrorCode.REMOTE_ERROR, "the server said: ${t.serverMessage}")
+
         t is HostKeyMismatchException ->
             SyncError(
                 SyncErrorCode.HOST_KEY_MISMATCH,

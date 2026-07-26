@@ -9,10 +9,12 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.ProgressMonitor
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.util.FS
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.SshSessionFactory
 import org.eclipse.jgit.transport.TagOpt
+import org.eclipse.jgit.transport.URIish
 import org.eclipse.jgit.transport.sshd.ServerKeyDatabase
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory
 import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder
@@ -56,6 +58,11 @@ class JGitMirror(
     /** The last host key the server presented, for probing. */
     private val observedKey = AtomicReference<String?>(null)
 
+    private companion object {
+        const val DIAGNOSTIC_TIMEOUT_MS = 15_000
+        const val MAX_SERVER_MESSAGE = 2_000
+    }
+
     override suspend fun sync(
         remoteUrl: String,
         destination: File,
@@ -81,12 +88,65 @@ class JGitMirror(
             // A refused host key closes the session, and JGit only ever sees the
             // socket end. The recorded reason is the truthful one.
             val refused = rejection.get()
+            val mapped = SyncErrors.fromException(t)
+            val base = refused?.copy(diagnostic = mapped.diagnostic) ?: mapped
+
+            // JGit reads only stdout. When a git host refuses the *repository*
+            // — no access, wrong path, does not exist — it explains itself on
+            // stderr and closes stdout, which surfaces here as a bare EOF with
+            // no reason. Ask the server directly what it said.
+            val serverMessage = if (requiresSsh(remoteUrl) && isEmptyReadFailure(t)) {
+                readServerMessage(remoteUrl)
+            } else {
+                null
+            }
+
             MirrorOutcome.Failure(
-                refused?.copy(diagnostic = SyncErrors.fromException(t).diagnostic)
-                    ?: SyncErrors.fromException(t)
+                if (serverMessage.isNullOrBlank()) {
+                    base
+                } else {
+                    base.copy(
+                        code = SyncErrorCode.REMOTE_ERROR,
+                        detail = "the server said: ${serverMessage.trim()}",
+                    )
+                }
             )
         }
     }
+
+    /** An EOF with nothing read: the signature of a server that closed stdout. */
+    private fun isEmptyReadFailure(t: Throwable): Boolean =
+        generateSequence(t) { it.cause.takeIf { c -> c !== it } }
+            .any { it is java.io.EOFException }
+
+    /**
+     * Opens one SSH session, runs `git-upload-pack` exactly as the transport
+     * would, and returns whatever the server wrote to **stderr**.
+     *
+     * This is the only way to see a git host's own explanation: JGit's pack
+     * transport consumes stdout and discards stderr, so a message like
+     * "repository does not exist" is thrown away and the caller sees an
+     * unexplained end of stream.
+     *
+     * Best-effort by design — any failure here returns null rather than
+     * replacing the original error with a diagnostic one.
+     */
+    private fun readServerMessage(remoteUrl: String): String? = runCatching {
+        val uri = URIish(remoteUrl)
+        val sessionFactory = factory ?: return null
+        val session = sessionFactory.getSession(uri, null, FS.DETECTED, DIAGNOSTIC_TIMEOUT_MS)
+        try {
+            val path = uri.path.orEmpty()
+            val process = session.exec("git-upload-pack '$path'", DIAGNOSTIC_TIMEOUT_MS)
+            try {
+                process.errorStream.bufferedReader().use { it.readText() }.take(MAX_SERVER_MESSAGE)
+            } finally {
+                runCatching { process.destroy() }
+            }
+        } finally {
+            runCatching { session.disconnect() }
+        }
+    }.getOrNull()
 
     override suspend fun probeHostKey(remoteUrl: String): Result<String> = withContext(io) {
         AndroidSystemReader.install()
@@ -96,10 +156,15 @@ class JGitMirror(
             Git.lsRemoteRepository().setRemote(remoteUrl).setHeads(true).call()
             observedKey.get() ?: error("the server presented no host key")
         }.recoverCatching { t ->
-            // Authentication may fail after the host key has been read. A captured
-            // fingerprint is still a successful probe — the point is to show the
-            // user the key, not to prove the key pair is authorised yet.
-            observedKey.get() ?: throw t
+            // The host key is read before authentication, so a fingerprint can be
+            // captured even when the repository itself is unreachable. Reporting
+            // success on that basis alone is what let a broken remote be added as
+            // if it worked — so the failure is surfaced, enriched with whatever
+            // the server wrote to stderr.
+            val fingerprint = observedKey.get() ?: throw t
+            val serverMessage = readServerMessage(remoteUrl)
+            if (serverMessage.isNullOrBlank()) throw t
+            throw ProbeRejectedException(fingerprint, serverMessage.trim(), t)
         }
     }
 
