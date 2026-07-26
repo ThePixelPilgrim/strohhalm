@@ -95,6 +95,7 @@
     <string name="error_remote_error">The remote repository could not be read.</string>
     <string name="error_local_corrupt">The local mirror looks damaged. Delete and re-add the repository.</string>
     <string name="error_interrupted">The sync was interrupted before it finished. Try again.</string>
+    <string name="error_cancelled">You stopped this sync. Nothing was lost — start it again whenever you like.</string>
     <string name="error_unknown">The sync failed.</string>
 
     <!-- Settings -->
@@ -109,4 +110,5 @@
     <string name="settings_key_regenerate_title">Regenerate the key?</string>
     <string name="settings_key_regenerate_body">A new key is generated and the current one stops working immediately. Every server has to be updated with the new public key before backups resume.</string>
     <string name="settings_notify_title">Notify when a backup fails</string>
+    <string name="action_stop_sync">Stop</string>
 </resources>

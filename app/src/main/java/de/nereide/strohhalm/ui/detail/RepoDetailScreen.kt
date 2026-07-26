@@ -104,7 +104,7 @@ fun RepoDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            SyncProgressBar(progress)
+            SyncProgressBar(progress, onCancel = viewModel::cancelSync)
 
             syncErrorText(current.lastErrorCode)?.let { message ->
                 DiagnosticCard(

@@ -1,8 +1,11 @@
 package de.nereide.strohhalm.domain
 
 import de.nereide.strohhalm.data.Repo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +19,8 @@ data class SyncProgress(
     val task: String,
     val completed: Int,
     val total: Int,
+    /** When this repository's sync began, for an elapsed-time display. */
+    val startedAt: Long = 0L,
 ) {
     /** Null when the engine does not know the total for this phase. */
     val fraction: Float?
@@ -39,6 +44,14 @@ class SyncRunner(
     private val scope: CoroutineScope,
     private val foreground: ForegroundHold = NoForegroundHold,
 ) {
+
+    private companion object {
+        /**
+         * Shown until JGit's monitor first fires. Deliberately names what is
+         * happening rather than saying "preparing", which reads as stalled.
+         */
+        const val CONTACTING = "Contacting the server"
+    }
 
     private val _progress = MutableStateFlow<SyncProgress?>(null)
     val progress: StateFlow<SyncProgress?> = _progress.asStateFlow()
@@ -76,6 +89,19 @@ class SyncRunner(
     }
 
     /**
+     * Stops the sync in flight.
+     *
+     * Cancelling the job is only half of it: the mirror spends its time inside
+     * a blocking JGit call, which coroutine cancellation alone cannot unwind —
+     * the flag would flip, the UI would clear, and the transfer would carry on
+     * unseen. [JGitMirror] runs that call interruptibly so this actually stops
+     * the work rather than just stopping the bookkeeping.
+     */
+    fun cancel() {
+        job?.cancel()
+    }
+
+    /**
      * Clears rows left at SYNCING by a process that died mid-sync — a crash, or
      * the system reclaiming the app. Without this they stay SYNCING forever and
      * the UI implies work is happening when nothing is.
@@ -86,7 +112,22 @@ class SyncRunner(
 
     private suspend fun sync(repo: Repo) {
         repos.markSyncing(repo.id)
-        val outcome = runCatching {
+        val startedAt = System.currentTimeMillis()
+
+        // Published immediately so the UI shows the repository and a running
+        // clock straight away. JGit reports nothing until data flows, and for a
+        // large repository the server spends minutes enumerating and compressing
+        // objects first — during which silence must not look like a freeze.
+        _progress.value = SyncProgress(
+            repoId = repo.id,
+            repoName = repo.displayName,
+            task = CONTACTING,
+            completed = 0,
+            total = 0,
+            startedAt = startedAt,
+        )
+
+        val outcome = try {
             mirror.sync(
                 remoteUrl = repo.remoteUrl,
                 destination = File(repo.localPath),
@@ -95,13 +136,24 @@ class SyncRunner(
                     _progress.value = SyncProgress(
                         repoId = repo.id,
                         repoName = repo.displayName,
-                        task = task,
+                        task = task.ifBlank { CONTACTING },
                         completed = completed,
                         total = total,
+                        startedAt = startedAt,
                     )
                 }
             )
-        }.getOrElse { t -> MirrorOutcome.Failure(SyncErrors.fromException(t)) }
+        } catch (cancelled: CancellationException) {
+            // The row must not be left claiming to sync, and the write has to
+            // outlive the cancellation that triggered it — hence NonCancellable.
+            // Rethrown so the scope still unwinds as cancelled.
+            withContext(NonCancellable) {
+                repos.markFailure(repo.id, SyncError(SyncErrorCode.CANCELLED))
+            }
+            throw cancelled
+        } catch (t: Throwable) {
+            MirrorOutcome.Failure(SyncErrors.fromException(t))
+        }
 
         when (outcome) {
             is MirrorOutcome.Success ->

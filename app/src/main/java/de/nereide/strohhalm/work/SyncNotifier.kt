@@ -50,7 +50,24 @@ class SyncNotifier(private val context: Context) {
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(openApp())
+            // A sync runs for minutes with the app off screen, so the
+            // notification is where the user actually is when one goes wrong.
+            // Making them reopen the app to stop it defeats the point.
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                context.getString(R.string.action_stop_sync),
+                stopSync(),
+            )
             .build()
+
+    private fun stopSync(): PendingIntent =
+        PendingIntent.getService(
+            context,
+            1,
+            Intent(context, SyncForegroundService::class.java)
+                .setAction(SyncForegroundService.ACTION_CANCEL),
+            PendingIntent.FLAG_IMMUTABLE
+        )
 
     private fun openApp(): PendingIntent =
         PendingIntent.getActivity(

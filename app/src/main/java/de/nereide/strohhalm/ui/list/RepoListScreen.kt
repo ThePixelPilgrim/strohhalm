@@ -87,7 +87,7 @@ fun RepoListScreen(
             }
         } else {
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                SyncProgressBar(progress)
+                SyncProgressBar(progress, onCancel = viewModel::cancelSync)
                 LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
                     items(uiState.repos, key = { it.id }) { repo ->
                         RepoRow(repo = repo, onClick = { onOpenRepo(repo.id) })

@@ -20,6 +20,8 @@ enum class SyncErrorCode {
     LOCAL_CORRUPT,
     /** The process died mid-sync; the row was left claiming to be running. */
     INTERRUPTED,
+    /** The user stopped it. Not a fault, and never worth an alarming message. */
+    CANCELLED,
     UNKNOWN,
 }
 

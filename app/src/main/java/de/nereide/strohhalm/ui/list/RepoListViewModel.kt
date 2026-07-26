@@ -37,6 +37,8 @@ class RepoListViewModel(
 
     fun syncAll() = syncRunner.launchSyncAll()
 
+    fun cancelSync() = syncRunner.cancel()
+
     companion object {
         val Factory = viewModelFactory {
             initializer {

@@ -25,6 +25,7 @@ fun syncErrorText(code: String?): String? {
             SyncErrorCode.REMOTE_ERROR -> R.string.error_remote_error
             SyncErrorCode.LOCAL_CORRUPT -> R.string.error_local_corrupt
             SyncErrorCode.INTERRUPTED -> R.string.error_interrupted
+            SyncErrorCode.CANCELLED -> R.string.error_cancelled
             SyncErrorCode.UNKNOWN -> R.string.error_unknown
         }
     )

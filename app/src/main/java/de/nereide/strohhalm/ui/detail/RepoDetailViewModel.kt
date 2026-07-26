@@ -54,6 +54,8 @@ class RepoDetailViewModel(
         }
     }
 
+    fun cancelSync() = syncRunner.cancel()
+
     fun syncNow() {
         syncRunner.launchSyncOne(id)
         // Refs are re-read when the runner goes idle again, below.

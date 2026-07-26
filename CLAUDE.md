@@ -123,6 +123,31 @@ If Gradle cannot find the SDK, create `local.properties` with
   The symptom is also misleading: JGit reports `remote hung up unexpectedly`, which reads
   like a network fault. Check the cause chain before believing the message.
 
+- **Never read a remote stream to EOF without a deadline.** `readServerMessage`
+  execs `git-upload-pack` to harvest the server's stderr, which is the only way to see
+  a git host's own explanation. But against a **healthy** repository upload-pack writes
+  its advertisement to *stdout*, writes **nothing** to stderr, and waits for a request
+  the probe never sends. Reading stderr to EOF then parks forever — sshd keepalives keep
+  the session alive, and `RemoteSession.exec`'s timeout bounds only channel *open*, not
+  the streams. The result was a sync wedged inside its own error handler with no error,
+  no progress and no end, and a leaked SSH connection per attempt (the `finally` never
+  ran), which made the *next* attempt likelier to fail — self-reinforcing. A watchdog now
+  disconnects the session at the deadline. Note `RemoteSession.exec` takes **seconds**;
+  passing a millisecond constant silently yields a multi-hour timeout.
+
+- **JGit installs no read timeout unless you ask.** `BasePackConnection.init` only wraps
+  the stream in a `TimeoutInputStream` when `transport.getTimeout() > 0`. With the default
+  of 0, a silently dropped connection blocks a read forever. Every clone/fetch/ls-remote
+  must call `setTimeout(...)` — the timer re-arms per read, so large transfers are safe.
+
+- **Cancelling a sync needs a thread interrupt, not just a cancelled coroutine.** The
+  mirror spends its time in blocking JGit socket reads; `job.cancel()` alone would flip
+  the flag and clear the UI while the transfer kept running. `JGitMirror` wraps the
+  transfer in `runInterruptible`, and `ProgressMonitor.isCancelled()` reports the thread's
+  interrupt flag so JGit also stops cleanly when progress is flowing. Two matching traps:
+  `runCatching` swallows `CancellationException` unless it is rethrown, and the row's
+  final DB write must run under `NonCancellable` or it never happens.
+
 - **Kotlin block comments nest.** Writing a git refspec such as the literal
   `+refs/<star>:refs/<star>` inside a KDoc opens a nested comment that never closes, and
   the file fails with `Unclosed comment` — a confusing error pointing at the end of the
@@ -141,7 +166,9 @@ If Gradle cannot find the SDK, create `local.properties` with
 ## Current state
 
 Spec and plan are written and approved. Implementation follows the 13 tasks in the plan.
-Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation, path probe).
+Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation, path probe),
+through `v0.1.9` (mirror engine, SSH transport, host-key pinning, live progress, foreground
+service, cancellable syncs).
 
 Task 2 gates everything that touches JGit: it pins the dependency versions and confirms
 the `ServerKeyDatabase` API shape the mirror engine depends on.
@@ -168,4 +195,10 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
 - **The removable-volume branch of `StorageRootResolver`** (`StorageVolume.uuid` lookup,
   API 30+). Only the `primary` branch has been exercised. Keep `StorageProbe` — it is how
   this gets checked if anyone points Strohhalm at an SD card.
-- **Everything JGit/SSH.** No connection to a real server has ever been made.
+- **Large-repository mirroring.** A 4 MB repo mirrors successfully over SSH on device.
+  A 44 MiB / 72k-object repo has never completed: it wedged in the unbounded diagnostic
+  probe described above. The fix is covered by `JGitMirrorDiagnosticHangTest` (a local
+  MINA `SshServer` reproducing the exact device failure) but has **not** been confirmed
+  on hardware.
+- **Cancelling a sync on device.** Covered by `SyncRunnerCancelTest`, unverified on
+  hardware — including whether the notification's Stop action reaches the service.

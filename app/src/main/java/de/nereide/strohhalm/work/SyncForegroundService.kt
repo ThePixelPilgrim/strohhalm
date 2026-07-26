@@ -56,7 +56,12 @@ class SyncForegroundService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            (applicationContext as StrohhalmApp).container.syncRunner.cancel()
+        }
+        return START_NOT_STICKY
+    }
 
     override fun onDestroy() {
         scope.cancel()
@@ -76,6 +81,9 @@ class SyncForegroundService : Service() {
     }
 
     companion object {
+        /** Sent by the notification's Stop action. */
+        const val ACTION_CANCEL = "de.nereide.strohhalm.action.CANCEL_SYNC"
+
         /**
          * [ForegroundHold] backed by this service.
          *

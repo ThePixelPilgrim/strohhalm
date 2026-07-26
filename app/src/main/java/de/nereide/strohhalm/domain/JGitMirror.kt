@@ -1,7 +1,9 @@
 package de.nereide.strohhalm.domain
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.digest.BuiltinDigests
@@ -60,7 +62,20 @@ class JGitMirror(
 
     private companion object {
         const val DIAGNOSTIC_TIMEOUT_MS = 15_000
+        /** [org.eclipse.jgit.transport.RemoteSession.exec] takes *seconds*. */
+        const val DIAGNOSTIC_TIMEOUT_SECONDS = 15
         const val MAX_SERVER_MESSAGE = 2_000
+
+        /**
+         * Stream-level timeout for clone/fetch/ls-remote, in seconds (the unit
+         * JGit's `setTimeout` uses). Without it JGit installs no
+         * `TimeoutInputStream` at all (`BasePackConnection.init` skips the
+         * wrapping when the timeout is 0), so a connection that dies silently —
+         * mobile networks, server-side drops — blocks a read forever and the
+         * sync never completes and never errors. The timer re-arms on every
+         * read, so a slow transfer is fine as long as bytes keep flowing.
+         */
+        const val TRANSPORT_TIMEOUT_SECONDS = 300
     }
 
     override suspend fun sync(
@@ -75,16 +90,26 @@ class JGitMirror(
                 installSessionFactory(pinnedFingerprint, capture = false)
             }
             val monitor = progress?.let(::ThrottledMonitor)
-            if (File(destination, "HEAD").isFile) {
-                fetchInto(destination, remoteUrl, monitor)
-            } else {
-                cloneMirror(remoteUrl, destination, monitor)
+            // runInterruptible, not a plain call: JGit blocks in socket reads
+            // that no coroutine can unwind. Without the thread interrupt,
+            // cancelling would clear the UI while the transfer kept running.
+            runInterruptible {
+                if (File(destination, "HEAD").isFile) {
+                    fetchInto(destination, remoteUrl, monitor)
+                } else {
+                    cloneMirror(remoteUrl, destination, monitor)
+                }
             }
             MirrorOutcome.Success(
                 sizeBytes = sizeBytes(destination),
                 refCount = refNames(destination).size,
             )
         }.getOrElse { t ->
+            // runCatching catches everything, including the CancellationException
+            // that stopping the sync depends on. Swallowing it would turn a
+            // deliberate stop into a spurious failure and leave the scope alive.
+            if (t is CancellationException) throw t
+
             // A refused host key closes the session, and JGit only ever sees the
             // socket end. The recorded reason is the truthful one.
             val refused = rejection.get()
@@ -137,9 +162,32 @@ class JGitMirror(
         val session = sessionFactory.getSession(uri, null, FS.DETECTED, DIAGNOSTIC_TIMEOUT_MS)
         try {
             val path = uri.path.orEmpty()
-            val process = session.exec("git-upload-pack '$path'", DIAGNOSTIC_TIMEOUT_MS)
+            val process = session.exec("git-upload-pack '$path'", DIAGNOSTIC_TIMEOUT_SECONDS)
             try {
-                process.errorStream.bufferedReader().use { it.readText() }.take(MAX_SERVER_MESSAGE)
+                // On a *healthy* repository, git-upload-pack writes the ref
+                // advertisement to stdout, writes nothing to stderr, and waits
+                // indefinitely for a request that this probe never sends —
+                // sshd keepalives keep the session alive, so reading stderr to
+                // EOF would park the sync inside its own error handler forever.
+                // The watchdog closes the session at the deadline, which ends
+                // the stream and unblocks the read.
+                val watchdog = Thread {
+                    try {
+                        Thread.sleep(DIAGNOSTIC_TIMEOUT_MS.toLong())
+                    } catch (_: InterruptedException) {
+                        return@Thread
+                    }
+                    runCatching { session.disconnect() }
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+                try {
+                    process.errorStream.bufferedReader().use { it.readText() }
+                        .take(MAX_SERVER_MESSAGE)
+                } finally {
+                    watchdog.interrupt()
+                }
             } finally {
                 runCatching { process.destroy() }
             }
@@ -153,7 +201,11 @@ class JGitMirror(
         runCatching {
             installSessionFactory(pinnedFingerprint = null, capture = true)
             // ls-remote is the cheapest operation that completes a handshake.
-            Git.lsRemoteRepository().setRemote(remoteUrl).setHeads(true).call()
+            Git.lsRemoteRepository()
+                .setRemote(remoteUrl)
+                .setHeads(true)
+                .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
+                .call()
             observedKey.get() ?: error("the server presented no host key")
         }.recoverCatching { t ->
             // The host key is read before authentication, so a fingerprint can be
@@ -196,6 +248,7 @@ class JGitMirror(
             .setDirectory(destination)
             .setBare(true)
             .setMirror(true)
+            .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
             .apply { monitor?.let { setProgressMonitor(it) } }
             .call()
             .close()
@@ -209,6 +262,7 @@ class JGitMirror(
                     .setRefSpecs(RefSpec("+refs/*:refs/*"))
                     .setRemoveDeletedRefs(true)
                     .setTagOpt(TagOpt.FETCH_TAGS)
+                    .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
                     .apply { monitor?.let { setProgressMonitor(it) } }
                     .call()
             }
@@ -246,7 +300,11 @@ class JGitMirror(
 
         override fun endTask() = emit(force = true)
 
-        override fun isCancelled(): Boolean = false
+        // JGit polls this between units of work, so it stops the transfer
+        // cleanly whenever progress is actually flowing. It is not sufficient on
+        // its own — a stall before the first callback is never polled at all,
+        // which is what the thread interrupt is for.
+        override fun isCancelled(): Boolean = Thread.currentThread().isInterrupted
 
         override fun showDuration(enabled: Boolean) = Unit
 
@@ -268,9 +326,19 @@ class JGitMirror(
             .setMustExist(true)
             .build()
 
-    private fun requiresSsh(remoteUrl: String): Boolean =
-        remoteUrl.startsWith("ssh://") ||
-            (!remoteUrl.contains("://") && remoteUrl.contains(":"))
+    /**
+     * True for `ssh://…` and for scp-style `user@host:path`.
+     *
+     * The earlier version treated anything containing a colon but not `://` as
+     * scp-style, which misclassified `file:/tmp/x` — the form `File.toURI()`
+     * produces, with a single slash — as an SSH remote.
+     */
+    private fun requiresSsh(remoteUrl: String): Boolean {
+        val scheme = remoteUrl.substringBefore("://", missingDelimiterValue = "")
+        if (scheme.isNotEmpty()) return scheme == "ssh"
+        if (remoteUrl.startsWith("file:")) return false
+        return remoteUrl.contains(":")
+    }
 
     /**
      * What the host key check should do for the operation currently in flight.
