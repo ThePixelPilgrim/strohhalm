@@ -165,13 +165,21 @@ If Gradle cannot find the SDK, create `local.properties` with
 
 ## Current state
 
-Spec and plan are written and approved. Implementation follows the 13 tasks in the plan.
 Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation, path probe),
 through `v0.1.9` (mirror engine, SSH transport, host-key pinning, live progress, foreground
-service, cancellable syncs).
+service, cancellable syncs), and `v0.2.0` (the hash-agnostic mirror engine).
 
-Task 2 gates everything that touches JGit: it pins the dependency versions and confirms
-the `ServerKeyDatabase` API shape the mirror engine depends on.
+**The mirror engine has been replaced.** `AppContainer` now builds a `ProtocolMirror`, a
+Kotlin implementation of git's protocol v2 over MINA SSHD that follows whatever hash the
+remote negotiates — so SHA-256 remotes work. All 15 tasks of
+`docs/superpowers/plans/2026-07-26-sha256-mirror-engine.md` are implemented; the spec is
+`docs/superpowers/specs/2026-07-26-sha256-mirror-engine-design.md`.
+
+`JGitMirror` and `AndroidSystemReader` are **deliberately still present but unused**. The
+plan gates their deletion on the hardware checks below, and deleting the only engine ever
+verified on a device on the strength of unit tests is the mistake that gate exists to
+prevent. Do not remove them, or the JGit `implementation` dependencies, until those checks
+pass. JGit stays a test dependency permanently — it builds SHA-1 pack fixtures.
 
 ### Verified on real hardware
 
@@ -202,3 +210,20 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
   on hardware.
 - **Cancelling a sync on device.** Covered by `SyncRunnerCancelTest`, unverified on
   hardware — including whether the notification's Stop action reaches the service.
+- **The entire `ProtocolMirror` engine, shipped in `v0.2.0`.** No part of it has run on a
+  device or against a real forge. What *is* verified: `MirrorEndToEndTest` mirrors a real
+  SHA-256 repository over a local MINA `SshServer` and the system `git` then accepts the
+  result under `git fsck --strict` and `git verify-pack -v` — real git validating the one
+  artifact the engine authors, which is the strongest evidence obtainable without hardware.
+  Four things that test cannot reach, and that gate deleting JGit:
+  1. A real SHA-256 remote mirrors end to end.
+  2. `git clone` from the mirror folder restores a working tree.
+  3. The 44 MiB / 72k-object repository completes. Watch memory — `KotlinPackIndexer` is
+     disk-backed (a temp `.pack` read back through two `RandomAccessFile` passes) precisely
+     so this cannot blow the heap, and this is the benchmark that proves it.
+  4. Cancelling a running sync stops it, including via the notification's Stop action.
+- **That protocol v2 activation reaches a real server.** The engine requests v2 out-of-band
+  via the `GIT_PROTOCOL=version=2` SSH channel env var, exactly as git does. Hosted forges
+  accept it; a self-managed OpenSSH server needs `AcceptEnv GIT_PROTOCOL` in `sshd_config`,
+  and without it the engine reports a clear v0 refusal rather than mirroring. Only a local
+  test server has ever answered this.
