@@ -178,6 +178,52 @@ class ArchiveStoreTest {
         assertTrue(siblingSidecar.exists())
     }
 
+    /**
+     * The hazard, reproduced synchronously: maintenance prunes while a build is
+     * packing. On POSIX the unlink does not stop the writer — the bytes keep
+     * flowing to an anonymous inode, and the finalising rename then finds no
+     * source at all. The archiver here holds its output stream open across the
+     * prune, exactly as the real packer's `FileOutputStream` is.
+     */
+    @Test
+    fun `pruning does not delete the part file a build is still writing`() {
+        cache = temp.newFolder("archives")
+        lateinit var underTest: ArchiveStore
+        val reentrant = object : MirrorArchiver {
+            override fun archive(gitDir: File, target: File, progress: ArchiveProgress?): ArchiveResult {
+                val bytes = ByteArray(32) { 7 }
+                java.io.FileOutputStream(target).use { out ->
+                    underTest.prune("yamiro", null)
+                    out.write(bytes)
+                }
+                return ArchiveResult(
+                    sha256 = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).toHex(),
+                    bytes = bytes.size.toLong(),
+                    entries = 1,
+                )
+            }
+        }
+        underTest = ArchiveStore(cache, reentrant)
+        store = underTest
+
+        val archive = store.build("yamiro", mirror(), fingerprint, synced, null)
+
+        assertTrue(archive.isFile)
+        assertEquals(archive, store.existing("yamiro", fingerprint))
+    }
+
+    /** A part file no build is writing is dead weight; prune must still clear it. */
+    @Test
+    fun `pruning still deletes a stale part file from an earlier run`() {
+        store = store()
+        val stale = File(cache, ArchiveNames.part("yamiro-2026-07-25-${"a".repeat(12)}.zip"))
+        stale.writeBytes(ByteArray(8))
+
+        store.prune("yamiro", null)
+
+        assertFalse(stale.exists())
+    }
+
     /** A cancelled build must leave nothing that could later be mistaken for done. */
     @Test
     fun `a failed build leaves no part file behind`() {

@@ -50,6 +50,19 @@ class ArchiveStore(
     private val archiver: MirrorArchiver = ZipMirrorArchiver(),
 ) {
 
+    /**
+     * The `.part` names a build is writing right now.
+     *
+     * An *orphaned* part file is worthless and [prune] is right to clear it; a
+     * *live* one is minutes of packing, and unlinking it does not stop the
+     * writer — the bytes go on filling an anonymous inode, the finalising
+     * rename finds no source, and the user gets a generic failure after the
+     * whole wait. Concurrent because the two genuinely run on different
+     * threads: maintenance prunes on `Dispatchers.IO` while the pack runs
+     * inside `runInterruptible` elsewhere.
+     */
+    private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /** A finished, intact, current archive for [slug], or null. */
     fun existing(slug: String, fingerprint: String): File? {
         val candidate = root.listFiles()
@@ -87,11 +100,16 @@ class ArchiveStore(
         val part = File(root, ArchiveNames.part(name))
         val archive = File(root, name)
 
+        inFlight.add(part.name)
         val result = try {
             archiver.archive(gitDir, part, progress)
         } catch (t: Throwable) {
             part.delete()
             throw t
+        } finally {
+            // Both ways out: on the throw the part is already gone, and on
+            // success the rename below is what removes it.
+            inFlight.remove(part.name)
         }
 
         if (!part.renameTo(archive)) {
@@ -131,8 +149,12 @@ class ArchiveStore(
                 }
             }
         // Orphaned part files are never valid; a build that left one is over.
-        files.filter { it.name.endsWith(".part") && ArchiveNames.belongsTo(it.name, slug) }
-            .forEach { it.delete() }
+        // One a build is still writing is not orphaned, and survives.
+        files.filter {
+            it.name.endsWith(".part") &&
+                ArchiveNames.belongsTo(it.name, slug) &&
+                it.name !in inFlight
+        }.forEach { it.delete() }
         return removed
     }
 
