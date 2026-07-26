@@ -156,6 +156,44 @@ corruption or partial eviction after the fact.
 Re-hashing on every share costs a second or two on a large archive. It is kept
 because the whole point of reuse is that the reused file is trustworthy.
 
+### Pruning when a sync makes an archive stale
+
+Waiting until the next share to notice that an archive is stale means a
+superseded archive can sit in the cache indefinitely — for a repository synced
+every 15 minutes and shared once, that is the common case, not the edge case.
+
+So pruning also runs **after a sync that changed the refs**. The sync already
+holds the ref list it just wrote, so the new fingerprint costs a digest and no
+extra I/O; every `<slug>-*.zip` whose infix differs from it is superseded, and
+its sidecar with it.
+
+This must not be observable from the UI, which constrains where it runs:
+
+- On an **application-scoped** coroutine, not a ViewModel's. Pruning is not
+  the user's business and must not be cancelled by navigating away, nor keep a
+  screen alive.
+- On `Dispatchers.IO`, launched **after** the sync's final database write rather
+  than awaited by it. That write already runs under `NonCancellable` because it
+  must outlive cancellation; putting file deletion in that critical path would
+  make the sync's completion wait on unrelated work.
+- Emitting no state. Nothing recomposes, no progress is reported, and a failure
+  to delete is swallowed — a leftover file is worth zero user-facing noise, and
+  the next share prunes it anyway.
+
+**The archive currently being shared is never pruned.** An `ACTION_SEND` grant
+stays readable until the receiving activity finishes, and a receiver that
+streams rather than copies — a slow upload, say — is still reading the file
+minutes later. Deleting it mid-read produces a corrupt transfer in *another*
+app, which is both the worst place for it to surface and the hardest for the
+user to attribute.
+
+Two rules prevent it. `ArchiveStore` keeps the path most recently handed to a
+share sheet, and skips it. Beyond that, an archive is only pruned once a
+**grace period** has passed since it was last shared; the period exists because
+there is no reliable signal for "the receiver is finished", so time is the only
+honest proxy. A stale archive surviving one extra sync cycle costs disk; one
+deleted too early costs a broken transfer.
+
 ### The waiting state
 
 Tapping Share while a sync is running does not refuse. It enters a waiting
@@ -218,6 +256,11 @@ JVM unit tests for everything except the share sheet.
 - **`ArchiveStore`** — builds once and reuses on the second call; a tampered zip
   forces a rebuild; a changed fingerprint forces a rebuild and prunes the old
   archive.
+- **Pruning** — a changed ref list removes the superseded archive and its
+  sidecar; an unchanged one removes nothing; the archive most recently handed to
+  a share sheet survives even when superseded; and it becomes prunable once the
+  grace period has elapsed. Time is injected, so the grace period is tested
+  without waiting for it.
 - **End to end** — archive a real mirror, unpack it, and run `git fsck --strict`
   and `git clone` on the result. Real git validating the output is the only
   thing that proves the archive is restorable, and it is the same technique
@@ -233,9 +276,14 @@ share sheet appearing, and a receiving app actually reading the URI.
   chosen. This is inherent to the feature. Mitigated only by a one-line warning
   at the point of sharing. Encryption would need a passphrase UI and a decryption
   story on the receiving end, which is a separate feature.
-- **Cache growth.** Each repository ever shared leaves one archive in `cacheDir`
-  until Android reclaims it. Pruning is per-repo on rebuild, not global, because
-  keeping the last archive is precisely what makes reuse work.
+- **Cache growth.** Each repository ever shared leaves *at most one* archive in
+  `cacheDir` — the current one — because a sync that moves the refs prunes its
+  predecessor. Pruning stays per-repo rather than global, since keeping the
+  latest archive is precisely what makes reuse work.
+- **A shared archive outlives its usefulness by the grace period.** The window
+  is deliberate: there is no signal for "the receiving app has finished reading
+  the URI", so the alternative to waiting is deleting a file out from under an
+  in-flight transfer.
 - **Peak storage.** Building needs roughly the mirror's size free in internal
   storage, which on a device with a large mirror on an SD card may be the
   binding constraint. The precheck reports it rather than failing late.
@@ -250,11 +298,13 @@ Each step is a task with its own test cycle, in TDD order.
 2. `MirrorArchiver` — zip a directory, reproducible bytes, stored packs,
    progress, interrupt-safe.
 3. `ArchiveStore` — naming, sidecar, verify, atomic rename, prune.
-4. Free-space precheck and `SyncError` mapping.
-5. `FileProvider`, manifest entry, `file_paths.xml`, `ACTION_SEND`.
-6. `RepoDetailViewModel` — share state machine including the waiting state.
-7. `RepoDetailScreen` — Share action, waiting UI, progress and Stop, strings.
-8. End-to-end test: archive a mirror, unpack, `git fsck` and `git clone`.
-9. Device check: the share sheet, a real receiving app, and a large mirror.
+4. Post-sync pruning — application-scoped, off the sync's critical path,
+   respecting the in-flight share and the grace period.
+5. Free-space precheck and `SyncError` mapping.
+6. `FileProvider`, manifest entry, `file_paths.xml`, `ACTION_SEND`.
+7. `RepoDetailViewModel` — share state machine including the waiting state.
+8. `RepoDetailScreen` — Share action, waiting UI, progress and Stop, strings.
+9. End-to-end test: archive a mirror, unpack, `git fsck` and `git clone`.
+10. Device check: the share sheet, a real receiving app, and a large mirror.
 
-Step 9 needs hardware and must not be marked done without being run.
+Step 10 needs hardware and must not be marked done without being run.
