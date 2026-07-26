@@ -110,6 +110,19 @@ If Gradle cannot find the SDK, create `local.properties` with
   and a real git remote whose `authorized_keys` you can edit. Task 13's periodic-sync
   verification needs a device. Do not fake these or mark them done.
 
+- **MINA SSHD needs a home directory on Android, set before it is first touched.**
+  SSHD resolves `~` in a chain of static holders ending at
+  `PathUtils$LazyDefaultUserHomeFolderHolder`, which throws on Android because there is
+  no `user.home`. `SshdEnvironment.install(filesDir)` calls
+  `PathUtils.setUserHomeFolderResolver` and runs from `StrohhalmApp.onCreate` for a
+  reason: **class-initialisation failure is permanent for the process.** Once those
+  holders have failed, every later SSH attempt throws `NoClassDefFoundError` and setting
+  the resolver afterwards cannot repair it — only restarting the app can. Never make this
+  lazy, and never move it after `AppContainer` construction.
+
+  The symptom is also misleading: JGit reports `remote hung up unexpectedly`, which reads
+  like a network fault. Check the cause chain before believing the message.
+
 - **Kotlin block comments nest.** Writing a git refspec such as the literal
   `+refs/<star>:refs/<star>` inside a KDoc opens a nested comment that never closes, and
   the file fails with `Unclosed comment` — a confusing error pointing at the end of the

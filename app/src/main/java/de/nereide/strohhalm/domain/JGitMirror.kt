@@ -138,10 +138,11 @@ class JGitMirror(
         observed: AtomicReference<String?>?,
     ) {
         val keyPair = keyPairProvider()
+        val home = SshdEnvironment.homeDir()
         val factory: SshdSessionFactory = SshdSessionFactoryBuilder()
             .setPreferredAuthentications("publickey")
-            .setHomeDirectory(NO_HOME)
-            .setSshDirectory(NO_HOME)
+            .setHomeDirectory(home)
+            .setSshDirectory(File(home, ".ssh"))
             .setDefaultKeysProvider { listOf(keyPair) }
             .setServerKeyDatabase { _, _ -> pinningDatabase(pinnedFingerprint, observed) }
             .build(null)
@@ -180,12 +181,4 @@ class JGitMirror(
         }
     }
 
-    private companion object {
-        /**
-         * JGit insists on a home and .ssh directory. Android has neither, and the
-         * key is supplied programmatically, so an unused path keeps it from
-         * reading any on-disk config.
-         */
-        val NO_HOME: File = File("/data/local/tmp/strohhalm-nonexistent")
-    }
 }
