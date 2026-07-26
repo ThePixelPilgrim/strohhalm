@@ -21,3 +21,7 @@ app/keystore.properties
 
 # Superpowers brainstorming companion (local mockups)
 .superpowers/
+
+# Live tests. These name a real remote and use an operator's own SSH key, so
+# they are run from the working tree and never committed.
+app/src/test/java/**/Live*Test.kt
