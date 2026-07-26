@@ -36,9 +36,19 @@ class ZipMirrorArchiver : MirrorArchiver {
     override fun archive(gitDir: File, target: File, progress: ArchiveProgress?): ArchiveResult {
         // Sorted, because directory iteration order is not guaranteed and the
         // archive has to be reproducible for its checksum to mean anything.
+        //
+        // Empty directories are carried too, and they are not cosmetic: a bare
+        // mirror keeps every ref in `packed-refs`, which leaves `refs/heads`
+        // and `refs/tags` empty on disk. Git decides whether a directory is a
+        // repository by looking for `objects` and `refs`, so an archive that
+        // dropped them unpacks into something git rejects outright with
+        // "not a git repository" — the mirror would be intact and unusable.
+        // Non-empty directories need no entry: unzip creates the parents of a
+        // file it is writing.
         val entries = gitDir.walkTopDown()
-            .filter { it.isFile }
+            .filter { it.isFile || it.isEmptyDirectory() }
             .map { it to it.relativeTo(gitDir).path.replace(File.separatorChar, '/') }
+            .filter { (_, relative) -> relative.isNotEmpty() }
             .sortedBy { (_, relative) -> relative }
             .toList()
 
@@ -53,6 +63,12 @@ class ZipMirrorArchiver : MirrorArchiver {
                         // coroutine can unwind on its own.
                         if (Thread.currentThread().isInterrupted) {
                             throw InterruptedException("archive cancelled")
+                        }
+                        if (file.isDirectory) {
+                            zip.putNextEntry(directoryEntry("$root/$relative/"))
+                            zip.closeEntry()
+                            progress?.update("Packing", index + 1, entries.size)
+                            return@forEachIndexed
                         }
                         // Pack files arrive already deflated. Compressing them
                         // again costs real seconds on a phone and saves nothing.
@@ -80,6 +96,24 @@ class ZipMirrorArchiver : MirrorArchiver {
             bytes = target.length(),
             entries = entries.size,
         )
+    }
+
+    /** True for a directory holding nothing at all — no files, no subdirectories. */
+    private fun File.isEmptyDirectory(): Boolean =
+        isDirectory && (listFiles()?.isEmpty() ?: false)
+
+    /**
+     * A zero-length entry whose name ends in `/`, which is how a zip records a
+     * directory. `STORED` with an explicit size and CRC of zero, because that
+     * is what every other packer writes and the most conservative thing to
+     * hand an unzip implementation we do not control.
+     */
+    private fun directoryEntry(name: String): ZipEntry = ZipEntry(name).apply {
+        method = ZipEntry.STORED
+        size = 0
+        compressedSize = 0
+        crc = 0
+        time = FIXED_TIME
     }
 
     /**
