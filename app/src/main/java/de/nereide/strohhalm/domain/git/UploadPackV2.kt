@@ -126,6 +126,48 @@ class UploadPackV2(
     }
 
     /**
+     * Asks for [wants], offering [haves], and returns the packfile as a plain
+     * stream of bytes.
+     *
+     * Two negotiation choices, both deliberate:
+     *
+     * `thin-pack` is **not** advertised. It is an optional client capability, and
+     * declining it obliges the server to send a self-contained pack — which
+     * removes fix-thin, the step that would otherwise force this engine to read
+     * local objects it is designed never to read.
+     *
+     * [haves] are ref tips only. Walking history to offer better haves would mean
+     * parsing commits, which the engine otherwise never does; the cost of a
+     * weaker negotiation is a larger download, never a wrong result.
+     */
+    fun fetch(
+        caps: ServerCapabilities,
+        wants: List<String>,
+        haves: List<String>,
+        onProgress: (String) -> Unit,
+    ): InputStream {
+        val arguments = buildList {
+            add("ofs-delta")
+            wants.forEach { add("want $it") }
+            haves.forEach { add("have $it") }
+            add("done")
+        }
+        writeCommand("fetch", caps, arguments)
+
+        // With "done" sent the server skips acknowledgments and goes straight to
+        // the packfile section, so the only thing to skip is its header line.
+        while (true) {
+            when (val pkt = PktLine.read(input)) {
+                is Pkt.Data -> if (pkt.text().trim() == "packfile") break
+                is Pkt.Delim -> Unit
+                is Pkt.Flush, is Pkt.ResponseEnd ->
+                    throw IOException("the server sent no packfile section")
+            }
+        }
+        return SidebandInputStream(input, onProgress)
+    }
+
+    /**
      * A v2 command: the command line and capabilities, a delimiter, then the
      * arguments, then a flush.
      *
