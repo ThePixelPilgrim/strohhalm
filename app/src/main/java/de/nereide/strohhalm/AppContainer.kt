@@ -5,7 +5,6 @@ import android.os.storage.StorageManager
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
-import de.nereide.strohhalm.data.RepoSlug
 import de.nereide.strohhalm.data.SettingsRepository
 import de.nereide.strohhalm.data.StrohhalmDatabase
 import de.nereide.strohhalm.domain.DefaultRepoRepository
@@ -15,6 +14,7 @@ import de.nereide.strohhalm.domain.git.ProtocolMirror
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.SyncRunner
+import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveStore
 import de.nereide.strohhalm.work.SyncForegroundService
 import kotlinx.coroutines.CoroutineScope
@@ -96,7 +96,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
             store = archiveStore,
             mirrors = {
                 repoRepository.all().map {
-                    RepoSlug.fromRemoteUrl(it.remoteUrl) to File(it.localPath)
+                    ArchiveNames.slugForMirror(File(it.localPath)) to File(it.localPath)
                 }
             },
             scope = applicationScope,

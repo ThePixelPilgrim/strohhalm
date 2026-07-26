@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import de.nereide.strohhalm.data.Repo
-import de.nereide.strohhalm.data.RepoSlug
 import de.nereide.strohhalm.data.SyncStatus
 import de.nereide.strohhalm.domain.GitMirror
 import de.nereide.strohhalm.domain.RepoRepository
@@ -14,6 +13,7 @@ import de.nereide.strohhalm.domain.SyncErrorCode
 import de.nereide.strohhalm.domain.SyncErrors
 import de.nereide.strohhalm.domain.SyncProgress
 import de.nereide.strohhalm.domain.SyncRunner
+import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveSpace
 import de.nereide.strohhalm.domain.archive.ArchiveStore
 import de.nereide.strohhalm.domain.archive.RefFingerprint
@@ -107,7 +107,7 @@ class RepoDetailViewModel(
                 withContext(Dispatchers.IO) {
                     val repository = MirrorRepository(gitDir)
                     val fingerprint = RefFingerprint.of(repository.localRefs())
-                    val slug = RepoSlug.fromRemoteUrl(current.remoteUrl)
+                    val slug = ArchiveNames.slugForMirror(gitDir)
 
                     archives.existing(slug, fingerprint) ?: run {
                         ArchiveSpace.check(current.sizeBytes, allocatableBytes())

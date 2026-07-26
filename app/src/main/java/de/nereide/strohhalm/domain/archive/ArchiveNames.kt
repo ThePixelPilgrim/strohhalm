@@ -39,13 +39,50 @@ object ArchiveNames {
      */
     fun matches(fileName: String, slug: String, fingerprint: String): Boolean {
         if (!fileName.endsWith(".zip")) return false
-        val stem = fileName.removeSuffix(".zip")
-        return stem.startsWith("$slug-") &&
-            stem.endsWith("-${fingerprint.take(SHORT)}") &&
-            // Guards a slug that is a prefix of another: "my-notes" must not
-            // match "my-notes-2-…". What is left between the two anchors has to
-            // be exactly the date.
-            stem.removePrefix("$slug-").removeSuffix("-${fingerprint.take(SHORT)}").length == DATE_LENGTH
+        return shortIn(fileName.removeSuffix(".zip"), slug) == fingerprint.take(SHORT)
+    }
+
+    /**
+     * Whether [fileName] is an archive, a sidecar or a part file of exactly
+     * [slug] — the question deletion asks, where a wrong yes destroys another
+     * repository's archive.
+     *
+     * Ownership is decided by the same anchoring [matches] uses, not by a
+     * prefix: "notes" must not claim "notes-2-…".
+     */
+    fun belongsTo(fileName: String, slug: String): Boolean {
+        val base = fileName.removeSuffix(".part").removeSuffix(".sha256")
+        if (!base.endsWith(".zip")) return false
+        val short = shortIn(base.removeSuffix(".zip"), slug) ?: return false
+        return short.all { it in HEX }
+    }
+
+    /**
+     * The archive slug of the mirror kept in [gitDir].
+     *
+     * It has to come from the directory name, because that is the
+     * collision-resolved slug: two repositories can share a remote basename,
+     * and the second one's mirror is `notes-2.git`. Deriving the slug from the
+     * remote URL instead would give both of them "notes", so they would share
+     * one archive namespace and prune each other's files on every sync.
+     */
+    fun slugForMirror(gitDir: java.io.File): String = gitDir.name.removeSuffix(".git")
+
+    /**
+     * The short fingerprint ending [stem], if [stem] is exactly
+     * `<slug>-<date>-<short>`; null otherwise.
+     *
+     * Anchoring both ends is what separates a slug that is a prefix of another:
+     * "my-notes" must not match "my-notes-2-…". Everything that has to make
+     * that distinction goes through here, so the two callers cannot drift.
+     */
+    private fun shortIn(stem: String, slug: String): String? {
+        val prefix = "$slug-"
+        if (!stem.startsWith(prefix)) return null
+        val rest = stem.removePrefix(prefix)
+        if (rest.length != DATE_LENGTH + 1 + SHORT) return null
+        if (rest[DATE_LENGTH] != '-') return null
+        return rest.substring(DATE_LENGTH + 1)
     }
 
     /** The name the recipient sees: no hash, because it means nothing to them. */
@@ -53,10 +90,12 @@ object ArchiveNames {
         if (!archiveName.endsWith(".zip")) return archiveName
         val stem = archiveName.removeSuffix(".zip")
         val short = stem.takeLast(SHORT)
-        if (short.length < SHORT || !short.all { it in "0123456789abcdef" }) return archiveName
+        if (short.length < SHORT || !short.all { it in HEX }) return archiveName
         if (stem.length < SHORT + 1 || stem[stem.length - SHORT - 1] != '-') return archiveName
         return stem.dropLast(SHORT + 1) + ".zip"
     }
 
     private const val DATE_LENGTH = 10
+
+    private const val HEX = "0123456789abcdef"
 }

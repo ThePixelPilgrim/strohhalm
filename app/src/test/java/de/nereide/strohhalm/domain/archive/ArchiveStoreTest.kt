@@ -157,6 +157,27 @@ class ArchiveStoreTest {
         assertTrue(mine.exists())
     }
 
+    /**
+     * "notes-2" is a second repository, not a stale archive of "notes". A raw
+     * prefix test claims its files; anchoring is what keeps them apart.
+     */
+    @Test
+    fun `pruning leaves alone a repository whose slug extends this one`() {
+        store = store()
+        val mine = store.build("notes", mirror(), fingerprint, synced, null)
+
+        val sibling = File(cache, "notes-2-2026-07-26-${"b".repeat(12)}.zip")
+        sibling.writeBytes(ByteArray(8))
+        val siblingSidecar = File(cache, ArchiveNames.sidecar(sibling.name))
+        siblingSidecar.writeText("# refs ${"b".repeat(64)}\n${"c".repeat(64)}  ${sibling.name}\n")
+
+        val moved = RefFingerprint.of(mapOf("refs/heads/main" to "b".repeat(64)))
+        assertEquals(1, store.prune("notes", moved))
+        assertFalse(mine.exists())
+        assertTrue(sibling.exists())
+        assertTrue(siblingSidecar.exists())
+    }
+
     /** A cancelled build must leave nothing that could later be mistaken for done. */
     @Test
     fun `a failed build leaves no part file behind`() {

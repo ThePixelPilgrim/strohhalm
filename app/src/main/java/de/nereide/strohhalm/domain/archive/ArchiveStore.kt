@@ -120,7 +120,8 @@ class ArchiveStore(
     fun prune(slug: String, currentFingerprint: String?): Int {
         val files = root.listFiles() ?: return 0
         var removed = 0
-        files.filter { it.name.startsWith("$slug-") && it.name.endsWith(".zip") }
+        // Ownership, not a prefix: "notes" must not delete "notes-2"'s files.
+        files.filter { it.name.endsWith(".zip") && ArchiveNames.belongsTo(it.name, slug) }
             .forEach { archive ->
                 val keep = currentFingerprint != null &&
                     ArchiveNames.matches(archive.name, slug, currentFingerprint)
@@ -130,7 +131,7 @@ class ArchiveStore(
                 }
             }
         // Orphaned part files are never valid; a build that left one is over.
-        files.filter { it.name.startsWith("$slug-") && it.name.endsWith(".part") }
+        files.filter { it.name.endsWith(".part") && ArchiveNames.belongsTo(it.name, slug) }
             .forEach { it.delete() }
         return removed
     }

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.time.ZoneId
 
 class ArchiveNamesTest {
@@ -55,6 +56,48 @@ class ArchiveNamesTest {
         assertEquals("my-notes-2-2026-07-26-4f2a91c07b3e.zip", name)
         assertTrue(ArchiveNames.matches(name, "my-notes-2", fingerprint))
         assertFalse(ArchiveNames.matches(name, "my-notes", fingerprint))
+    }
+
+    /** Ownership covers all three files a build can leave behind. */
+    @Test
+    fun `an archive, its sidecar and its part file all belong to the slug`() {
+        val name = ArchiveNames.archive("notes", synced, fingerprint, utc)
+        assertTrue(ArchiveNames.belongsTo(name, "notes"))
+        assertTrue(ArchiveNames.belongsTo(ArchiveNames.sidecar(name), "notes"))
+        assertTrue(ArchiveNames.belongsTo(ArchiveNames.part(name), "notes"))
+    }
+
+    /**
+     * The case pruning got wrong: "notes-2" is a different repository, and none
+     * of its files may be claimed by "notes".
+     */
+    @Test
+    fun `a slug that extends this one keeps its own files`() {
+        val sibling = ArchiveNames.archive("notes-2", synced, fingerprint, utc)
+        assertFalse(ArchiveNames.belongsTo(sibling, "notes"))
+        assertFalse(ArchiveNames.belongsTo(ArchiveNames.sidecar(sibling), "notes"))
+        assertFalse(ArchiveNames.belongsTo(ArchiveNames.part(sibling), "notes"))
+        assertTrue(ArchiveNames.belongsTo(sibling, "notes-2"))
+    }
+
+    @Test
+    fun `a name that is not ours belongs to nothing`() {
+        assertFalse(ArchiveNames.belongsTo("other-2026-07-26-4f2a91c07b3e.zip", "notes"))
+        assertFalse(ArchiveNames.belongsTo("notes.zip", "notes"))
+        assertFalse(ArchiveNames.belongsTo("notes-2026-07-26.zip", "notes"))
+        assertFalse(ArchiveNames.belongsTo("notes-2026-07-26-zzzzzzzzzzzz.zip", "notes"))
+        assertFalse(ArchiveNames.belongsTo("notes-2026-07-26-4f2a91c07b3e.tar", "notes"))
+        assertFalse(ArchiveNames.belongsTo("README.txt", "notes"))
+    }
+
+    /**
+     * The mirror directory carries the collision-resolved slug, which is the
+     * only name that is unique across repositories.
+     */
+    @Test
+    fun `the slug comes from the mirror directory`() {
+        assertEquals("notes", ArchiveNames.slugForMirror(File("/storage/mirrors/notes.git")))
+        assertEquals("notes-2", ArchiveNames.slugForMirror(File("/storage/mirrors/notes-2.git")))
     }
 
     /** The recipient sees no hash: that is the point of the provider override. */
