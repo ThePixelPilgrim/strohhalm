@@ -9,7 +9,7 @@ import de.nereide.strohhalm.data.StrohhalmDatabase
 import de.nereide.strohhalm.domain.DefaultRepoRepository
 import de.nereide.strohhalm.domain.EncryptedSshKeyStore
 import de.nereide.strohhalm.domain.GitMirror
-import de.nereide.strohhalm.domain.JGitMirror
+import de.nereide.strohhalm.domain.git.ProtocolMirror
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.SyncRunner
@@ -53,7 +53,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     override val gitMirror: GitMirror by lazy {
-        JGitMirror(keyPairProvider = { sshKeyStore.keyPair() })
+        ProtocolMirror(keyPairProvider = { sshKeyStore.keyPair() })
     }
 
     override val repoRepository: RepoRepository by lazy {
