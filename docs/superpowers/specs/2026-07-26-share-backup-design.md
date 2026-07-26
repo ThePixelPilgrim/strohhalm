@@ -68,7 +68,8 @@ archive. It also avoids a schema migration.
 **A failed sync offers a choice rather than deciding.** When the sync being
 waited on fails, the waiting state does not silently abandon the share and does
 not silently archive a stale mirror. It reports what happened and offers both
-ways forward: **Retry sync**, or **Share anyway**.
+ways forward: **Retry sync**, or — once there has ever been a successful sync —
+**Share anyway**.
 
 That is possible because a failed fetch leaves the mirror *valid*. Packs are
 written to a temporary file and renamed only on success, and refs are written
@@ -203,36 +204,59 @@ deleted too early costs a broken transfer.
 
 ### The waiting state
 
-Tapping Share while a sync is running does not refuse. It enters a waiting
-state:
+Share is never refused outright. Tapping it registers an intent to share, and
+the screen then shows whatever stands between that intent and an archive. A
+repository that has never synced is included: the share waits, optimistically,
+for a first sync to produce something to pack.
+
+| Situation on tapping Share | Behaviour |
+| --- | --- |
+| Archive already current | Straight to the share sheet |
+| Sync running | "Waiting for the sync to finish", showing that sync's live progress through the existing `SyncProgressBar` |
+| No sync running, never synced | "Nothing has been backed up yet", offering **Sync now**. The share stays pending |
+| No sync running, synced before | Archives immediately |
+
+and once waiting:
 
 | Event | Behaviour |
 | --- | --- |
-| Sync running | "Waiting for the sync to finish", showing that sync's live progress through the existing `SyncProgressBar` |
-| Back | Share abandoned. Nothing is built; the sync is untouched and keeps running |
 | Sync succeeds | Proceeds automatically to archiving, with progress and Stop |
-| Sync **fails** | Stops waiting and shows the error, with two actions: **Retry sync** and **Share anyway** |
-| Sync **cancelled** | Stops waiting and says the sync was stopped — not an error — with the same two actions |
+| Sync **fails** | Stops waiting, shows the error, offers **Retry sync** and — only if there is something to share — **Share anyway** |
+| Sync **cancelled** | Stops waiting, says the sync was stopped rather than failed, same actions |
+| Back | Share abandoned. Nothing is built; the sync is untouched and keeps running |
 
-The failure branch is the one worth being precise about, because "the sync
-failed" and "the backup is unusable" are different statements and the UI must
-not conflate them:
+**Share anyway requires at least one successful sync.** It is offered when
+`Repo.lastSyncAt != null` and hidden otherwise, because before the first
+success there is no mirror to pack — an archive of a never-cloned repository
+would be an empty or absent directory, which is not an older backup but no
+backup at all. Offering it would be offering a file that cannot restore
+anything.
+
+The rest of the failure branch matters because "the sync failed" and "the backup
+is unusable" are different statements, and the UI must not conflate them:
 
 - The error text comes from the existing `SyncErrorText` mapping, so a failed
   sync reads identically here and on the rest of the detail screen.
 - **Retry sync** starts a sync and returns to waiting. The share is still
   pending, so a successful retry flows straight on to archiving — which is the
   whole point of offering it here rather than sending the user back to the
-  Sync now button.
+  Sync now button. **Sync now**, in the never-synced case, is the same action
+  under a name that fits a repository with no history behind it.
 - **Share anyway** archives the mirror as it stands. Alongside it the UI states
   when that state was last successfully synced, from `Repo.lastSyncAt`, because
   "share the older version" is only a real choice if the user can see how much
   older.
 - **Cancellation is not a failure.** The project already holds that a stopped
   sync "is recorded as stopped, not as a failure" and is "never worth an
-  alarming message"; this screen follows that. Same two actions, neutral
-  wording, no error styling.
+  alarming message"; this screen follows that. Same actions, neutral wording,
+  no error styling.
 - Back from any of these abandons the share, exactly as during the wait.
+
+Tapping Share on a never-synced repository does **not** start a sync by itself.
+It offers the button and waits to be told. Making a share silently open a
+network connection would be a surprising amount of consequence for a button
+that says "share", particularly on a metered connection, and the extra tap
+costs nothing that the wait does not already cost.
 
 The wait observes `SyncRunner.running`, which is process-wide rather than
 per-repo. That is a deliberate over-approximation: it may wait for a sync of a
@@ -295,8 +319,13 @@ JVM unit tests for everything except the share sheet.
   both actions available; **Retry sync** returns to waiting and a subsequent
   success still archives, proving the share stays pending across a retry;
   **Share anyway** archives the mirror untouched; cancellation reaches the same
-  two actions without being styled as an error; and Back from any state leaves
-  no archive behind and does not disturb the running sync.
+  actions without being styled as an error; and Back from any state leaves no
+  archive behind and does not disturb the running sync.
+- **The never-synced repository** — its own case, because it is the one where
+  offering the wrong action produces an unrestorable file: with
+  `lastSyncAt == null`, **Share anyway** is absent in every failure and
+  cancellation state; the share stays pending across the first sync and
+  archives when it succeeds; and tapping Share starts no sync on its own.
 - **End to end** — archive a real mirror, unpack it, and run `git fsck --strict`
   and `git clone` on the result. Real git validating the output is the only
   thing that proves the archive is restorable, and it is the same technique
