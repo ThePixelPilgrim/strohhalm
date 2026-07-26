@@ -120,6 +120,9 @@ object SyncErrors {
         t is SocketTimeoutException ->
             SyncError(SyncErrorCode.HOST_UNREACHABLE, t.message)
 
+        t is de.nereide.strohhalm.domain.git.SidebandException ->
+            SyncError(SyncErrorCode.REMOTE_ERROR, "the server said: ${t.serverMessage}")
+
         t is NoRemoteRepositoryException ->
             SyncError(SyncErrorCode.REMOTE_ERROR, t.message)
 
@@ -146,6 +149,12 @@ object SyncErrors {
 
             "corrupt" in lower || "invalid object" in lower ->
                 SyncError(SyncErrorCode.LOCAL_CORRUPT, message)
+
+            "checksum mismatch" in lower ->
+                SyncError(SyncErrorCode.LOCAL_CORRUPT, message)
+
+            "protocol version" in lower ->
+                SyncError(SyncErrorCode.REMOTE_ERROR, message)
 
             else -> null
         }
