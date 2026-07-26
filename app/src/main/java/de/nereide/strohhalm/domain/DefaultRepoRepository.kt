@@ -80,6 +80,11 @@ class DefaultRepoRepository(
         )
     }
 
+    override suspend fun updateHostKey(id: Long, fingerprint: String) {
+        val repo = dao.byId(id) ?: return
+        dao.update(repo.copy(hostKeyFingerprint = fingerprint))
+    }
+
     override suspend fun resetStaleSyncing(error: SyncError) {
         dao.all()
             .filter { it.lastStatus == SyncStatus.SYNCING }

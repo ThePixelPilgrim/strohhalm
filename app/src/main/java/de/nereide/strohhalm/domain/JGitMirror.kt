@@ -41,6 +41,21 @@ class JGitMirror(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : GitMirror {
 
+    /** Built once and reused; see [installSessionFactory]. */
+    @Volatile
+    private var factory: SshdSessionFactory? = null
+
+    @Volatile
+    private var keyPairs: List<KeyPair> = emptyList()
+
+    private val expectation = AtomicReference<HostKeyExpectation?>(null)
+
+    /** Why the host key check refused, when it did. Never surfaces via an exception. */
+    private val rejection = AtomicReference<SyncError?>(null)
+
+    /** The last host key the server presented, for probing. */
+    private val observedKey = AtomicReference<String?>(null)
+
     override suspend fun sync(
         remoteUrl: String,
         destination: File,
@@ -50,7 +65,7 @@ class JGitMirror(
         AndroidSystemReader.install()
         runCatching {
             if (requiresSsh(remoteUrl)) {
-                installSessionFactory(pinnedFingerprint, observed = null)
+                installSessionFactory(pinnedFingerprint, capture = false)
             }
             val monitor = progress?.let(::ThrottledMonitor)
             if (File(destination, "HEAD").isFile) {
@@ -63,23 +78,28 @@ class JGitMirror(
                 refCount = refNames(destination).size,
             )
         }.getOrElse { t ->
-            MirrorOutcome.Failure(SyncErrors.fromException(t))
+            // A refused host key closes the session, and JGit only ever sees the
+            // socket end. The recorded reason is the truthful one.
+            val refused = rejection.get()
+            MirrorOutcome.Failure(
+                refused?.copy(diagnostic = SyncErrors.fromException(t).diagnostic)
+                    ?: SyncErrors.fromException(t)
+            )
         }
     }
 
     override suspend fun probeHostKey(remoteUrl: String): Result<String> = withContext(io) {
         AndroidSystemReader.install()
-        val observed = AtomicReference<String?>(null)
         runCatching {
-            installSessionFactory(pinnedFingerprint = null, observed = observed)
+            installSessionFactory(pinnedFingerprint = null, capture = true)
             // ls-remote is the cheapest operation that completes a handshake.
             Git.lsRemoteRepository().setRemote(remoteUrl).setHeads(true).call()
-            observed.get() ?: error("the server presented no host key")
+            observedKey.get() ?: error("the server presented no host key")
         }.recoverCatching { t ->
             // Authentication may fail after the host key has been read. A captured
             // fingerprint is still a successful probe — the point is to show the
             // user the key, not to prove the key pair is authorised yet.
-            observed.get() ?: throw t
+            observedKey.get() ?: throw t
         }
     }
 
@@ -98,6 +118,13 @@ class JGitMirror(
     }
 
     private fun cloneMirror(remoteUrl: String, destination: File, monitor: ProgressMonitor?) {
+        // A clone that failed part-way leaves a directory with no HEAD. JGit
+        // refuses to clone into a non-empty directory, so without this a single
+        // failed attempt would wedge the repository permanently. Safe to remove:
+        // no HEAD means it was never a usable repository.
+        if (destination.exists() && !File(destination, "HEAD").isFile) {
+            destination.deleteRecursively()
+        }
         destination.parentFile?.mkdirs()
         Git.cloneRepository()
             .setURI(remoteUrl)
@@ -181,30 +208,56 @@ class JGitMirror(
             (!remoteUrl.contains("://") && remoteUrl.contains(":"))
 
     /**
-     * Installs a process-wide session factory offering only Strohhalm's key and
-     * enforcing the pinned host key. JGit's SSH transport is configured globally,
-     * so this is set immediately before each operation.
+     * What the host key check should do for the operation currently in flight.
+     *
+     * [capture] means "probing": accept and record whatever key is presented.
+     * Otherwise the key must match [pinned].
+     */
+    private data class HostKeyExpectation(
+        val pinned: String?,
+        val capture: Boolean,
+    )
+
+    /**
+     * Prepares the process-wide SSH session factory for one operation.
+     *
+     * The factory is built **once and reused**. An earlier version created one
+     * per operation and never closed it; each holds an `SshClient` with its own
+     * threads and connections, so repeated syncs leaked both — and a server that
+     * limits concurrent SSH connections (Codeberg does) then refuses or drops the
+     * next one, which surfaces as an unexplained EOF during ref advertisement.
+     *
+     * Per-operation state therefore lives in [expectation], which the key
+     * database consults on each connection, rather than being baked into a new
+     * factory each time.
      */
     private suspend fun installSessionFactory(
         pinnedFingerprint: String?,
-        observed: AtomicReference<String?>?,
+        capture: Boolean,
     ) {
-        val keyPair = keyPairProvider()
-        val home = SshdEnvironment.homeDir()
-        val factory: SshdSessionFactory = SshdSessionFactoryBuilder()
-            .setPreferredAuthentications("publickey")
-            .setHomeDirectory(home)
-            .setSshDirectory(File(home, ".ssh"))
-            .setDefaultKeysProvider { listOf(keyPair) }
-            .setServerKeyDatabase { _, _ -> pinningDatabase(pinnedFingerprint, observed) }
-            .build(null)
+        expectation.set(HostKeyExpectation(pinnedFingerprint, capture))
+        rejection.set(null)
+        observedKey.set(null)
+
+        synchronized(this) {
+            if (factory == null) {
+                val home = SshdEnvironment.homeDir()
+                factory = SshdSessionFactoryBuilder()
+                    .setPreferredAuthentications("publickey")
+                    .setHomeDirectory(home)
+                    .setSshDirectory(File(home, ".ssh"))
+                    .setDefaultKeysProvider { keyPairs }
+                    .setServerKeyDatabase { _, _ -> pinningDatabase }
+                    .build(null)
+            }
+        }
+        // The key pair is resolved outside the lock; suspending inside would be
+        // wrong and the store caches after the first call anyway.
+        keyPairs = listOf(keyPairProvider())
         SshSessionFactory.setInstance(factory)
     }
 
-    private fun pinningDatabase(
-        pinnedFingerprint: String?,
-        observed: AtomicReference<String?>?,
-    ) = object : ServerKeyDatabase {
+    private val pinningDatabase = object : ServerKeyDatabase {
 
         override fun lookup(
             connectAddress: String?,
@@ -212,6 +265,15 @@ class JGitMirror(
             config: ServerKeyDatabase.Configuration?,
         ): List<PublicKey> = emptyList()
 
+        /**
+         * Never throws. MINA SSHD calls this during key exchange, and an
+         * exception here — or a `false` return — simply closes the session; the
+         * cause never reaches JGit, which then reports a bare EOF ("Short read of
+         * block") that looks like a network fault.
+         *
+         * So the reason is recorded in [rejection] instead, and [sync] prefers it
+         * over whatever JGit ended up reporting.
+         */
         override fun accept(
             connectAddress: String?,
             remoteAddress: InetSocketAddress?,
@@ -219,18 +281,49 @@ class JGitMirror(
             config: ServerKeyDatabase.Configuration?,
             provider: CredentialsProvider?,
         ): Boolean {
+            val algorithm = serverKey?.algorithm ?: "unknown"
             val presented = KeyUtils.getFingerPrint(BuiltinDigests.sha256, serverKey)
-                ?: return false
-            observed?.set(presented)
+            if (presented == null) {
+                rejection.set(
+                    SyncError(
+                        SyncErrorCode.UNKNOWN,
+                        "the server presented no readable host key (algorithm $algorithm)"
+                    )
+                )
+                return false
+            }
+            observedKey.set(presented)
 
-            return when (val decision = HostKeyVerifier.verify(pinnedFingerprint, presented)) {
+            val current = expectation.get() ?: HostKeyExpectation(null, capture = false)
+            return when (val decision = HostKeyVerifier.verify(current.pinned, presented)) {
                 is HostKeyDecision.Trusted -> true
-                // Probing captures the key; syncing must never trust an unpinned host.
-                is HostKeyDecision.FirstUse -> observed != null
-                is HostKeyDecision.Mismatch ->
-                    throw HostKeyMismatchException(decision.stored, decision.presented)
+
+                is HostKeyDecision.FirstUse -> {
+                    if (current.capture) {
+                        true
+                    } else {
+                        rejection.set(
+                            SyncError(
+                                SyncErrorCode.HOST_KEY_MISMATCH,
+                                "no host key is pinned for this repository; " +
+                                    "the server offered $presented ($algorithm)"
+                            )
+                        )
+                        false
+                    }
+                }
+
+                is HostKeyDecision.Mismatch -> {
+                    rejection.set(
+                        SyncError(
+                            SyncErrorCode.HOST_KEY_MISMATCH,
+                            "expected ${decision.stored}, " +
+                                "got ${decision.presented} (algorithm $algorithm)"
+                        )
+                    )
+                    false
+                }
             }
         }
     }
-
 }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,6 +62,7 @@ fun RepoDetailScreen(
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()
     val refs by viewModel.refs.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
+    val pendingHostKey by viewModel.pendingHostKey.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var alsoDeleteFiles by remember { mutableStateOf(false) }
@@ -122,6 +124,11 @@ fun RepoDetailScreen(
                             ?.setPrimaryClip(ClipData.newPlainText("Strohhalm diagnostics", text))
                     }
                 )
+                if (current.lastErrorCode == "HOST_KEY_MISMATCH") {
+                    Button(onClick = { viewModel.recheckHostKey() }) {
+                        Text(stringResource(R.string.detail_recheck_host_key))
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
             }
 
@@ -166,6 +173,24 @@ fun RepoDetailScreen(
                 }
             }
         }
+    }
+
+    pendingHostKey?.let { fingerprint ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissNewHostKey,
+            title = { Text(stringResource(R.string.detail_new_host_key_title)) },
+            text = { Text(stringResource(R.string.detail_new_host_key_body, fingerprint)) },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmNewHostKey) {
+                    Text(stringResource(R.string.detail_new_host_key_accept))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissNewHostKey) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     if (confirmDelete) {

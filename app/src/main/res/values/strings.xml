@@ -67,6 +67,10 @@
     <string name="detail_never">Never</string>
     <string name="detail_refs_title">Mirrored refs (%1$d)</string>
     <string name="detail_refs_body">Every branch and tag captured, including ones never checked out. This is what a plain clone would have missed.</string>
+    <string name="detail_recheck_host_key">Check the server\'s key again</string>
+    <string name="detail_new_host_key_title">New host key</string>
+    <string name="detail_new_host_key_body">The server is now offering this key. Accept it only if you know the server was rebuilt or its key was rotated.\n\n%1$s</string>
+    <string name="detail_new_host_key_accept">Trust this key</string>
     <string name="detail_delete_title">Delete repository?</string>
     <string name="detail_delete_body">Strohhalm will stop mirroring it.</string>
     <string name="detail_delete_files">Also delete the local mirror from storage</string>

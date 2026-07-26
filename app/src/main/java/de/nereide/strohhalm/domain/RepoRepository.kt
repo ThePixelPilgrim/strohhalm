@@ -25,6 +25,9 @@ interface RepoRepository {
 
     suspend fun markFailure(id: Long, error: SyncError)
 
+    /** Re-pins the host key after the user has confirmed a new one. */
+    suspend fun updateHostKey(id: Long, fingerprint: String)
+
     /** Rewrites any row still marked SYNCING, after a process died mid-sync. */
     suspend fun resetStaleSyncing(error: SyncError)
 

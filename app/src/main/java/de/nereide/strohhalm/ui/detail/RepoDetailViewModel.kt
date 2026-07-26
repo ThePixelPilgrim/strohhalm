@@ -38,6 +38,10 @@ class RepoDetailViewModel(
     val syncing: StateFlow<Boolean> = syncRunner.running
     val progress: StateFlow<SyncProgress?> = syncRunner.progress
 
+    /** A freshly probed fingerprint awaiting the user's confirmation. */
+    private val _pendingHostKey = MutableStateFlow<String?>(null)
+    val pendingHostKey: StateFlow<String?> = _pendingHostKey.asStateFlow()
+
     private val _refs = MutableStateFlow<List<String>>(emptyList())
     val refs: StateFlow<List<String>> = _refs.asStateFlow()
 
@@ -67,6 +71,32 @@ class RepoDetailViewModel(
                 mirror.refNames(File(current.localPath))
             }
         }
+    }
+
+    /**
+     * Asks the server for its host key again. Used when the pinned key no longer
+     * matches — a server rebuild is legitimate, so there has to be a way forward
+     * that is not "delete and re-add", but it still requires the user to look at
+     * the new fingerprint and accept it.
+     */
+    fun recheckHostKey() {
+        viewModelScope.launch {
+            val current = repository.observe(id).first() ?: return@launch
+            mirror.probeHostKey(current.remoteUrl)
+                .onSuccess { _pendingHostKey.value = it }
+        }
+    }
+
+    fun confirmNewHostKey() {
+        val fingerprint = _pendingHostKey.value ?: return
+        viewModelScope.launch {
+            repository.updateHostKey(id, fingerprint)
+            _pendingHostKey.value = null
+        }
+    }
+
+    fun dismissNewHostKey() {
+        _pendingHostKey.value = null
     }
 
     fun delete(alsoDeleteFiles: Boolean) {
