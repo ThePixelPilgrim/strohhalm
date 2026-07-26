@@ -91,7 +91,14 @@ fun RepoDetailScreen(
                     if (syncing) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     } else {
-                        IconButton(onClick = { viewModel.syncNow() }) {
+                        // Greyed out while an archive is being packed: a fetch
+                        // would write into the very directory being zipped, and
+                        // the mirror lock would silently drop the tap. Better
+                        // that the button looks unavailable than dead.
+                        IconButton(
+                            onClick = { viewModel.syncNow() },
+                            enabled = shareState !is ShareState.Packing,
+                        ) {
                             Icon(Icons.Filled.Refresh, stringResource(R.string.list_sync_now))
                         }
                     }

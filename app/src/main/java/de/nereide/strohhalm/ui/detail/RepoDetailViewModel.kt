@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import de.nereide.strohhalm.data.Repo
 import de.nereide.strohhalm.data.SyncStatus
 import de.nereide.strohhalm.domain.GitMirror
+import de.nereide.strohhalm.domain.MirrorAccess
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SyncError
 import de.nereide.strohhalm.domain.SyncErrorCode
@@ -42,6 +43,7 @@ class RepoDetailViewModel(
     private val syncRunner: SyncRunner,
     private val archives: ArchiveStore,
     private val cacheSpace: CacheSpace,
+    private val access: MirrorAccess,
 ) : ViewModel() {
 
     val repo: StateFlow<Repo?> = repository.observe(id)
@@ -102,60 +104,86 @@ class RepoDetailViewModel(
     }
 
     private fun pack(current: Repo) {
-        packJob?.cancel()
+        val previous = packJob
+        previous?.cancel()
         packJob = viewModelScope.launch {
-            val gitDir = File(current.localPath)
-            val outcome = runCatching {
-                withContext(Dispatchers.IO) {
-                    val repository = MirrorRepository(gitDir)
-                    // Before anything else, because every step below is happy
-                    // to succeed on a mirror that is not there: `localRefs()`
-                    // is total and returns an empty map, its fingerprint is a
-                    // well-defined digest of nothing, and the space check reads
-                    // the row's stored size rather than the filesystem. The
-                    // user would see a share succeed. `ArchiveMaintenance`
-                    // guards with the same `exists()` call for the same reason.
-                    if (!repository.exists()) {
-                        throw ArchiveRefused(
-                            SyncError(
-                                SyncErrorCode.PERMISSION_LOST,
-                                "no mirror at ${gitDir.path} — " +
-                                    "the folder is gone or no longer readable",
-                            )
-                        )
-                    }
-                    val fingerprint = RefFingerprint.of(repository.localRefs())
-                    val slug = ArchiveNames.slugForMirror(gitDir)
+            // A cancelled pack keeps the mirror lock until its own `finally`
+            // has run, so a second Share tap would otherwise lose the acquire
+            // to the pack it just stopped and sit in Waiting for a sync that
+            // is not coming.
+            previous?.join()
 
-                    archives.existing(slug, fingerprint) ?: run {
-                        // Reserve, not merely ask: the reported figure includes
-                        // other apps' caches, which only become free space once
-                        // they are actually claimed.
-                        ArchiveSpace.reserveOrRefuse(cacheSpace, current.sizeBytes)
-                            ?.let { throw ArchiveRefused(it) }
-                        runInterruptible {
-                            archives.build(
-                                slug = slug,
-                                gitDir = gitDir,
-                                fingerprint = fingerprint,
-                                lastSyncAt = current.lastSyncAt ?: System.currentTimeMillis(),
-                            ) { _, completed, total ->
-                                _shareState.value = ShareState.Packing(completed, total)
+            // Nothing else stops a fetch from starting mid-archive: the Share
+            // path checked `syncing` once, on the tap. A fetch writes a
+            // temporary pack inside the mirror and rewrites its refs, and the
+            // resulting archive checksums clean while pointing at objects it
+            // does not contain. Losing the race is not an error — the sync
+            // that won it will finish, and the collector in `init` picks the
+            // share back up when it does.
+            if (!access.tryAcquire(MirrorAccess.Owner.ARCHIVE)) {
+                _shareState.value = ShareState.Waiting(neverSynced = false)
+                return@launch
+            }
+            val gitDir = File(current.localPath)
+            try {
+                val outcome = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val repository = MirrorRepository(gitDir)
+                        // Before anything else, because every step below is happy
+                        // to succeed on a mirror that is not there: `localRefs()`
+                        // is total and returns an empty map, its fingerprint is a
+                        // well-defined digest of nothing, and the space check reads
+                        // the row's stored size rather than the filesystem. The
+                        // user would see a share succeed. `ArchiveMaintenance`
+                        // guards with the same `exists()` call for the same reason.
+                        if (!repository.exists()) {
+                            throw ArchiveRefused(
+                                SyncError(
+                                    SyncErrorCode.PERMISSION_LOST,
+                                    "no mirror at ${gitDir.path} — " +
+                                        "the folder is gone or no longer readable",
+                                )
+                            )
+                        }
+                        val fingerprint = RefFingerprint.of(repository.localRefs())
+                        val slug = ArchiveNames.slugForMirror(gitDir)
+
+                        archives.existing(slug, fingerprint) ?: run {
+                            // Reserve, not merely ask: the reported figure includes
+                            // other apps' caches, which only become free space once
+                            // they are actually claimed.
+                            ArchiveSpace.reserveOrRefuse(cacheSpace, current.sizeBytes)
+                                ?.let { throw ArchiveRefused(it) }
+                            runInterruptible {
+                                archives.build(
+                                    slug = slug,
+                                    gitDir = gitDir,
+                                    fingerprint = fingerprint,
+                                    lastSyncAt = current.lastSyncAt
+                                        ?: System.currentTimeMillis(),
+                                ) { _, completed, total ->
+                                    _shareState.value = ShareState.Packing(completed, total)
+                                }
                             }
                         }
                     }
                 }
+                outcome
+                    .onSuccess { _shareState.value = ShareState.Ready(it) }
+                    .onFailure { t ->
+                        if (t is CancellationException) throw t
+                        _shareState.value = ShareState.Blocked(
+                            error = (t as? ArchiveRefused)?.error ?: SyncErrors.fromException(t),
+                            cancelled = false,
+                            canShareAnyway = false,
+                        )
+                    }
+            } finally {
+                // Covers the Stop button too: `cancelShare` cancels this job,
+                // and a lock left held would block every later sync for the
+                // lifetime of the process.
+                access.release(MirrorAccess.Owner.ARCHIVE)
             }
-            outcome
-                .onSuccess { _shareState.value = ShareState.Ready(it) }
-                .onFailure { t ->
-                    if (t is CancellationException) throw t
-                    _shareState.value = ShareState.Blocked(
-                        error = (t as? ArchiveRefused)?.error ?: SyncErrors.fromException(t),
-                        cancelled = false,
-                        canShareAnyway = false,
-                    )
-                }
         }
     }
 
@@ -260,6 +288,7 @@ class RepoDetailViewModel(
                     syncRunner = this.appContainer().syncRunner,
                     archives = this.appContainer().archiveStore,
                     cacheSpace = this.appContainer().cacheSpace,
+                    access = this.appContainer().mirrorAccess,
                 )
             }
         }

@@ -10,6 +10,7 @@ import de.nereide.strohhalm.data.StrohhalmDatabase
 import de.nereide.strohhalm.domain.DefaultRepoRepository
 import de.nereide.strohhalm.domain.EncryptedSshKeyStore
 import de.nereide.strohhalm.domain.GitMirror
+import de.nereide.strohhalm.domain.MirrorAccess
 import de.nereide.strohhalm.domain.git.ProtocolMirror
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SshKeyStore
@@ -34,6 +35,12 @@ interface AppContainer {
     val syncRunner: SyncRunner
     val archiveStore: ArchiveStore
     val archiveMaintenance: ArchiveMaintenance
+
+    /**
+     * Shared by [syncRunner] and the detail screen's packer. There is exactly
+     * one, because it only excludes anything if both sides hold the same lock.
+     */
+    val mirrorAccess: MirrorAccess
 
     /**
      * Scope living as long as the process — used for fire-and-forget work that
@@ -79,12 +86,15 @@ class DefaultAppContainer(context: Context) : AppContainer {
         )
     }
 
+    override val mirrorAccess: MirrorAccess = MirrorAccess()
+
     override val syncRunner: SyncRunner by lazy {
         SyncRunner(
             repos = repoRepository,
             mirror = gitMirror,
             scope = applicationScope,
             foreground = SyncForegroundService.hold(appContext),
+            access = mirrorAccess,
         )
     }
 

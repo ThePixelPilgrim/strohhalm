@@ -43,6 +43,7 @@ class SyncRunner(
     private val mirror: GitMirror,
     private val scope: CoroutineScope,
     private val foreground: ForegroundHold = NoForegroundHold,
+    private val access: MirrorAccess = MirrorAccess(),
 ) {
 
     private companion object {
@@ -72,6 +73,12 @@ class SyncRunner(
 
     private fun launch(block: suspend () -> Unit) {
         if (_running.value) return
+        // `_running` only knows about other syncs. An archive is reading the
+        // same directories and is invisible here, so the mirror lock is the
+        // only thing that can hold a fetch back — and it must, because a fetch
+        // mid-archive writes a temporary pack into the mirror and rewrites its
+        // refs, producing an archive that verifies and does not restore.
+        if (!access.tryAcquire(MirrorAccess.Owner.SYNC)) return
         _running.value = true
         // Acquired before the work starts and released only when it ends:
         // Android freezes cached processes, and a mirror of a large repository
@@ -84,6 +91,7 @@ class SyncRunner(
                 _running.value = false
                 _progress.value = null
                 foreground.release()
+                access.release(MirrorAccess.Owner.SYNC)
             }
         }
     }
