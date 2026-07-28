@@ -79,6 +79,9 @@
     <string name="detail_verify_now">Verify the server</string>
     <string name="detail_verify_auth_note">The server refused authentication — your public key is probably not installed there yet. You can trust the server\'s identity now; syncing will work once the key is in place.</string>
     <string name="detail_recheck_host_key">Check the server\'s key again</string>
+    <string name="keysetup_body">%1$s refused the key this device signs with. Add Strohhalm\'s public key to your account on the server, then sync again.</string>
+    <string name="keysetup_copy_key">Copy public key</string>
+    <string name="keysetup_open">Open %1$s</string>
     <string name="detail_new_host_key_title">New host key</string>
     <string name="detail_new_host_key_body">The server is now offering this key. Accept it only if you know the server was rebuilt or its key was rotated.\n\n%1$s</string>
     <string name="detail_new_host_key_accept">Trust this key</string>

@@ -52,6 +52,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
+import de.nereide.strohhalm.domain.SyncErrorCode
 import de.nereide.strohhalm.ui.add.DiagnosticCard
 import de.nereide.strohhalm.ui.common.CalmIndeterminateBar
 import de.nereide.strohhalm.ui.common.SyncProgressBar
@@ -73,6 +74,7 @@ fun RepoDetailScreen(
     val shareState by viewModel.shareState.collectAsStateWithLifecycle()
     val verifying by viewModel.verifying.collectAsStateWithLifecycle()
     val probeError by viewModel.probeError.collectAsStateWithLifecycle()
+    val publicKey by viewModel.publicKey.collectAsStateWithLifecycle()
     // Computed here, not after `val current = repo ?: return@Scaffold`: the
     // top-bar `actions` block renders before that point and needs it.
     val unverified = repo != null && repo?.hostKeyFingerprint == null
@@ -123,6 +125,18 @@ fun RepoDetailScreen(
         }
     ) { padding ->
         val current = repo ?: return@Scaffold
+        val remoteHost = remember(current.remoteUrl) {
+            runCatching {
+                de.nereide.strohhalm.domain.git.GitRemote.parse(current.remoteUrl).host
+            }.getOrNull()
+        }
+        val copyPublicKey = {
+            publicKey?.let { line ->
+                context.getSystemService(ClipboardManager::class.java)
+                    ?.setPrimaryClip(ClipData.newPlainText("Strohhalm public key", line))
+            }
+            Unit
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -176,6 +190,10 @@ fun RepoDetailScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                 }
+            }
+
+            if (probeError?.code == SyncErrorCode.AUTH_FAILED && remoteHost != null) {
+                KeySetupCard(host = remoteHost, publicKey = publicKey, onCopyKey = copyPublicKey)
             }
 
             when (val state = shareState) {
@@ -257,6 +275,9 @@ fun RepoDetailScreen(
                     Button(onClick = { viewModel.verify() }) {
                         Text(stringResource(R.string.detail_recheck_host_key))
                     }
+                }
+                if (current.lastErrorCode == SyncErrorCode.AUTH_FAILED.name && remoteHost != null) {
+                    KeySetupCard(host = remoteHost, publicKey = publicKey, onCopyKey = copyPublicKey)
                 }
                 Spacer(Modifier.height(16.dp))
             }

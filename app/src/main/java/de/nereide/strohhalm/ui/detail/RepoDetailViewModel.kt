@@ -9,6 +9,7 @@ import de.nereide.strohhalm.data.SyncStatus
 import de.nereide.strohhalm.domain.GitMirror
 import de.nereide.strohhalm.domain.MirrorAccess
 import de.nereide.strohhalm.domain.RepoRepository
+import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.SyncError
 import de.nereide.strohhalm.domain.SyncErrorCode
 import de.nereide.strohhalm.domain.SyncErrors
@@ -44,6 +45,7 @@ class RepoDetailViewModel(
     private val archives: ArchiveStore,
     private val cacheSpace: CacheSpace,
     private val access: MirrorAccess,
+    private val keys: SshKeyStore,
 ) : ViewModel() {
 
     val repo: StateFlow<Repo?> = repository.observe(id)
@@ -73,6 +75,10 @@ class RepoDetailViewModel(
 
     private val _probeError = MutableStateFlow<SyncError?>(null)
     val probeError: StateFlow<SyncError?> = _probeError.asStateFlow()
+
+    /** The public key line, for the auth-failure card's copy action. */
+    private val _publicKey = MutableStateFlow<String?>(null)
+    val publicKey: StateFlow<String?> = _publicKey.asStateFlow()
 
     private val _refs = MutableStateFlow<List<String>>(emptyList())
     val refs: StateFlow<List<String>> = _refs.asStateFlow()
@@ -259,6 +265,9 @@ class RepoDetailViewModel(
                 wasRunning = isRunning
             }
         }
+        viewModelScope.launch {
+            _publicKey.value = runCatching { keys.publicKeyLine() }.getOrNull()
+        }
     }
 
     fun cancelSync() = syncRunner.cancel()
@@ -351,6 +360,7 @@ class RepoDetailViewModel(
                     archives = this.appContainer().archiveStore,
                     cacheSpace = this.appContainer().cacheSpace,
                     access = this.appContainer().mirrorAccess,
+                    keys = this.appContainer().sshKeyStore,
                 )
             }
         }
