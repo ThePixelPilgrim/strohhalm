@@ -95,7 +95,7 @@ fun SyncProgressBar(
                 modifier = Modifier.fillMaxWidth()
             )
         } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            CalmIndeterminateBar(modifier = Modifier.fillMaxWidth())
         }
     }
 }
