@@ -32,6 +32,17 @@ class DefaultRepoRepositoryTest {
     }
 
     @Test
+    fun `a repository can be added without a host key`() = runTest {
+        val id = repository.add(
+            "Pending",
+            "ssh://git@host/srv/pending.git",
+            hostKeyFingerprint = null,
+        )
+
+        assertNull(dao.byId(id)!!.hostKeyFingerprint)
+    }
+
+    @Test
     fun `add makes colliding paths unique`() = runTest {
         repository.add("First", "ssh://a.host/srv/notes.git", "SHA256:aaa")
         val second = repository.add("Second", "ssh://b.host/other/notes.git", "SHA256:bbb")

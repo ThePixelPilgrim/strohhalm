@@ -16,8 +16,11 @@ interface RepoRepository {
     /**
      * Creates a repository with a directory name derived from [remoteUrl] and
      * made unique against those already taken. Returns the new row id.
+     *
+     * A null [hostKeyFingerprint] is a repository added before its server was
+     * verified; syncs skip it until a key is pinned.
      */
-    suspend fun add(displayName: String, remoteUrl: String, hostKeyFingerprint: String): Long
+    suspend fun add(displayName: String, remoteUrl: String, hostKeyFingerprint: String?): Long
 
     suspend fun markSyncing(id: Long)
 

@@ -27,7 +27,7 @@ class DefaultRepoRepository(
     override suspend fun add(
         displayName: String,
         remoteUrl: String,
-        hostKeyFingerprint: String,
+        hostKeyFingerprint: String?,
     ): Long {
         val root = storageRoot()
         val taken = dao.localPaths()

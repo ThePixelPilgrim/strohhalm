@@ -71,12 +71,16 @@ class SyncRunner(
      *   is coming, and waiting for it would wait for ever.
      */
     fun launchSyncOne(id: Long): Boolean = launch {
-        repos.all().firstOrNull { it.id == id }?.let { sync(it) }
+        repos.all().firstOrNull { it.id == id }
+            ?.takeIf { it.hostKeyFingerprint != null }
+            ?.let { sync(it) }
     }
 
     /** @return whether a sync actually started; see [launchSyncOne]. */
     fun launchSyncAll(): Boolean = launch {
-        repos.all().forEach { sync(it) }
+        // Unverified repositories are skipped silently: contacting them would
+        // only manufacture the refusal the UI already explains, once per cycle.
+        repos.all().filter { it.hostKeyFingerprint != null }.forEach { sync(it) }
     }
 
     private fun launch(block: suspend () -> Unit): Boolean {
