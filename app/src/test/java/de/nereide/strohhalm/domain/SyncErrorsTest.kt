@@ -100,4 +100,34 @@ class SyncErrorsTest {
         assertTrue(diagnostic.contains("root cause stack:"))
         assertTrue(diagnostic.contains("   at "))
     }
+
+    /**
+     * A ProbeRejectedException with a blank server message is a transport
+     * carrying a fingerprint, not a server verdict. Classification must fall
+     * through to its cause — here an auth failure — instead of reporting a
+     * REMOTE_ERROR with an empty message.
+     */
+    @Test
+    fun `a blank probe message defers classification to the cause`() {
+        val error = SyncErrors.fromException(
+            ProbeRejectedException(
+                fingerprint = "SHA256:abc",
+                serverMessage = "",
+                cause = Exception("Permission denied (publickey)"),
+            )
+        )
+        assertEquals(SyncErrorCode.AUTH_FAILED, error.code)
+    }
+
+    @Test
+    fun `a probe message from the server still wins over the cause`() {
+        val error = SyncErrors.fromException(
+            ProbeRejectedException(
+                fingerprint = "SHA256:abc",
+                serverMessage = "repository not found",
+                cause = Exception("stream ended"),
+            )
+        )
+        assertEquals(SyncErrorCode.REMOTE_ERROR, error.code)
+    }
 }

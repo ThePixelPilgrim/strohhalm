@@ -51,14 +51,21 @@ class HostKeyMismatchException(
 ) : Exception("host key mismatch: expected $stored, got $presented")
 
 /**
- * The SSH handshake succeeded but the server refused the repository, explaining
- * itself on stderr — where JGit's pack transport cannot see it.
+ * The SSH key exchange succeeded — so the host has identified itself — but the
+ * probe failed afterwards: the server refused the repository and explained
+ * itself on stderr, or authentication failed and [serverMessage] is blank.
+ * Either way the fingerprint is carried out, because pinning it is what lets a
+ * repository be added now and made to sync later.
  */
 class ProbeRejectedException(
     val fingerprint: String,
     val serverMessage: String,
     cause: Throwable,
-) : Exception("the server said: $serverMessage", cause)
+) : Exception(
+    if (serverMessage.isBlank()) cause.message ?: "the connection failed"
+    else "the server said: $serverMessage",
+    cause,
+)
 
 /**
  * Translates library exceptions into [SyncError]. This is the single boundary
@@ -105,7 +112,10 @@ object SyncErrors {
     private const val MAX_FRAMES = 25
 
     private fun classify(t: Throwable): SyncError? = when {
-        t is ProbeRejectedException ->
+        // A blank message is a fingerprint carrier, not a server verdict:
+        // fall through to the cause chain rather than masking, say, an auth
+        // failure as an empty REMOTE_ERROR.
+        t is ProbeRejectedException && t.serverMessage.isNotBlank() ->
             SyncError(SyncErrorCode.REMOTE_ERROR, "the server said: ${t.serverMessage}")
 
         t is HostKeyMismatchException ->
@@ -135,6 +145,8 @@ object SyncErrors {
         return when {
             "auth fail" in lower ||
                 "permission denied" in lower ||
+                // How MINA reports a rejected public key.
+                "no more authentication" in lower ||
                 "publickey" in lower ->
                 SyncError(SyncErrorCode.AUTH_FAILED, message)
 

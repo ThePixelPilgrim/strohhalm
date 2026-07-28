@@ -194,10 +194,12 @@ class ProtocolMirror(
                     channel.open()
                     UploadPackV2(channel.input, channel.output).readAdvertisement()
                 }.onFailure { failure ->
+                    // Past key exchange the server's identity is known even
+                    // when authentication or the git command failed. Carrying
+                    // it out lets the UI offer to pin now and sync later —
+                    // the missing-public-key case.
                     val fingerprint = channel.observedHostKey ?: throw failure
-                    val message = channel.stderrText()
-                    if (message.isBlank()) throw failure
-                    throw ProbeRejectedException(fingerprint, message, failure)
+                    throw ProbeRejectedException(fingerprint, channel.stderrText(), failure)
                 }
                 channel.observedHostKey ?: error("the server presented no host key")
             }
