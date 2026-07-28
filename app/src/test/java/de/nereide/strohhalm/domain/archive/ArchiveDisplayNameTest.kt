@@ -13,7 +13,7 @@ class ArchiveDisplayNameTest {
     @Test
     fun `a real archive name becomes a name worth receiving`() {
         assertEquals(
-            "yamiro-2026-07-26.zip",
+            "yamiro-git-backup-2026-07-26.zip",
             ArchiveNames.displayName("yamiro-2026-07-26-4f2a91c07b3e.zip"),
         )
     }

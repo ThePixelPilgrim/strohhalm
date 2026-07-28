@@ -85,15 +85,29 @@ object ArchiveNames {
         return rest.substring(DATE_LENGTH + 1)
     }
 
-    /** The name the recipient sees: no hash, because it means nothing to them. */
+    /**
+     * The name the recipient sees: no hash, because it means nothing to them,
+     * and "git-backup" spelled out, because "yamiro-2026-07-26.zip" in a
+     * download folder explains nothing about what it holds.
+     */
     fun displayName(archiveName: String): String {
         if (!archiveName.endsWith(".zip")) return archiveName
         val stem = archiveName.removeSuffix(".zip")
         val short = stem.takeLast(SHORT)
         if (short.length < SHORT || !short.all { it in HEX }) return archiveName
         if (stem.length < SHORT + 1 || stem[stem.length - SHORT - 1] != '-') return archiveName
-        return stem.dropLast(SHORT + 1) + ".zip"
+        val bare = stem.dropLast(SHORT + 1)
+        val slug = bare.dropLast(DATE_LENGTH + 1)
+        val date = bare.takeLast(DATE_LENGTH)
+        if (slug.isEmpty() || bare[slug.length] != '-' || !looksLikeDate(date)) {
+            return "$bare.zip"
+        }
+        return "$slug-git-backup-$date.zip"
     }
+
+    private fun looksLikeDate(text: String): Boolean =
+        text.length == DATE_LENGTH &&
+            text.withIndex().all { (i, c) -> if (i == 4 || i == 7) c == '-' else c.isDigit() }
 
     private const val DATE_LENGTH = 10
 

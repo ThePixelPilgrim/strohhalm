@@ -100,11 +100,15 @@ class ArchiveNamesTest {
         assertEquals("notes-2", ArchiveNames.slugForMirror(File("/storage/mirrors/notes-2.git")))
     }
 
-    /** The recipient sees no hash: that is the point of the provider override. */
+    /**
+     * The recipient sees no hash — that is the point of the provider override —
+     * and the name says what the file *is*: a zip called "yamiro-2026-07-26"
+     * explains nothing on a laptop's download folder six months later.
+     */
     @Test
-    fun `the display name drops the fingerprint`() {
+    fun `the display name drops the fingerprint and says what the file is`() {
         assertEquals(
-            "yamiro-2026-07-26.zip",
+            "yamiro-git-backup-2026-07-26.zip",
             ArchiveNames.displayName("yamiro-2026-07-26-4f2a91c07b3e.zip"),
         )
     }
@@ -112,6 +116,20 @@ class ArchiveNamesTest {
     @Test
     fun `an unrecognised name is its own display name`() {
         assertEquals("something.zip", ArchiveNames.displayName("something.zip"))
+    }
+
+    /** A hex tail alone is not our shape; without a date nothing is inserted. */
+    @Test
+    fun `a hex tail without a date only loses the hex tail`() {
+        assertEquals("foo.zip", ArchiveNames.displayName("foo-4f2a91c07b3e.zip"))
+    }
+
+    @Test
+    fun `a dashed slug keeps its dashes in the display name`() {
+        assertEquals(
+            "my-notes-2-git-backup-2026-07-26.zip",
+            ArchiveNames.displayName("my-notes-2-2026-07-26-4f2a91c07b3e.zip"),
+        )
     }
 
     @Test
