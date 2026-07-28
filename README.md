@@ -2,108 +2,105 @@
 
 Keeps offline mirror copies of remote git repositories on an Android device.
 
-> ## ⚠️ Work in progress — not usable yet
->
-> This repository currently contains the design, the implementation plan, the
-> project scaffold and the pure-logic components with their tests. **The app does
-> not yet sync anything.** The SSH transport, the git mirror engine, persistence
-> and the entire user interface are not implemented.
->
-> **`v0.1.2` should be able to mirror a repository — but that has never been
-> proven against a real server.** Everything is in place: the git engine, host
-> key confirmation, persistence, and an add/list/detail flow with a manual sync.
-> Whether JGit and MINA SSHD actually work on Android is exactly what this build
-> is for.
->
-> **Current state**
->
-> | Working | Not yet |
-> | --- | --- |
-> | Onboarding, permissions, folder picker | Background sync worker |
-> | Ed25519 key generation, encrypted at rest | Sync interval setting |
-> | Public key display and copy | Notifications |
-> | Add repository with host-key confirmation | Verified against a real server |
-> | Mirror clone/fetch, manual sync, ref listing | |
->
-> 74 unit tests pass. Syncing is manual only — a background scheduler would hide
-> the failures this build exists to surface.
->
-> ### Reporting a failure
->
-> Every error screen shows the library's own message and the exception class
-> chain, with a **Copy diagnostics** button. That detail is deliberately visible
-> rather than hidden behind a friendly message: the app is being developed
-> without adb, so the screen is the only channel back.
->
-> ### The path probe
->
-> When you choose a backup folder, Strohhalm writes `strohhalm-path-probe.txt`
-> into it, recording the path it *believes* it wrote to plus a random nonce.
->
-> This exists because deriving a real filesystem path from the Android folder
-> picker is an educated guess: the picker returns an opaque document id such as
-> `primary:Strohhalm`, and mapping that to `/storage/emulated/0/Strohhalm` relies
-> on undocumented behaviour. A plain write test would pass even if the guess
-> resolved to a *different* real, writable directory. Locating the file yourself
-> and comparing it against the recorded path is what actually proves the mapping
-> — and confirms the folder is reachable from outside the app, which is the whole
-> reason all-files access is requested.
->
-> The file is safe to delete.
+Strohhalm pulls; it never pushes. Each repository is stored as a bare mirror,
+so every branch, tag and note is captured — not just the default branch — and
+upstream deletions are pruned on the next sync. Data flows remote → device
+only. There is no commit authoring, no conflict resolution and no way for the
+app to modify a remote, by design.
 
----
-
-## What it will do
-
-Strohhalm pulls; it never pushes. Each repository is stored as a bare
-`git clone --mirror`, so every branch, tag and ref is captured — not just the
-default branch — and upstream deletions are pruned on the next sync.
-
-The device is the backup target. Data flows remote → device only. There is no
-commit authoring, no conflict resolution and no way for the app to modify a
-remote, by design.
+The mirror engine is Strohhalm's own implementation of git's protocol v2 over
+SSH. It follows whatever object format the server negotiates, so SHA-1 and
+SHA-256 repositories both mirror correctly.
 
 ## Recovery
 
-Mirrors are ordinary bare repositories. Restoring one will need no Strohhalm:
+Mirrors are ordinary bare repositories in a folder you choose, readable by any
+file manager and reachable over USB. Restoring one needs no Strohhalm:
 
-    adb pull /storage/emulated/0/Strohhalm/myrepo.git .
-    git clone myrepo.git myrepo
+    git clone /path/to/myrepo.git myrepo
 
-Keeping that property true is the point of the whole project. A backup you can
+Each repository also has a **Share** action that packs the mirror into a plain
+zip — named `myrepo-git-backup-2026-07-28.zip` — verifies it, and hands it to
+the system share sheet, so a backup can leave the phone by mail, chat, cable
+or cloud drive. A sidecar checksum file is valid `sha256sum -c` input. The
+zip is **not encrypted**; anyone you send it to can read the repository.
+
+Keeping all of that true is the point of the whole project. A backup you can
 only read with the tool that made it is not a backup.
 
-## Planned setup
+## Setup
 
-1. Grant all-files access when prompted. Mirrors are stored in a folder you
-   choose so they survive uninstalling the app; Android only permits that with
-   this permission.
+1. Grant all-files access when prompted. Mirrors live in a folder you choose
+   so they survive uninstalling the app; Android only permits that with this
+   permission.
 2. Choose or create a backup folder.
 3. Copy the public key from Settings into your server's `authorized_keys`, or
    add it as a read-only deploy key.
-4. Add a repository by its `ssh://` URL and confirm the host key fingerprint.
+4. Add a repository by its `ssh://` or `git@host:path` URL and confirm the
+   host key fingerprint.
 
-## Security design
+### Server requirements
 
-- An Ed25519 key is generated on device. The private key never leaves it: only
-  the 32-byte seed is stored, encrypted with AES-256-GCM under a key held in the
-  Android Keystore, in internal storage — never in the backup folder, which is
-  browsable and copied off-device by design.
-- Host keys are pinned on first use. If a server later presents a different key,
-  syncing stops and you are notified rather than silently trusting it.
-- `android:allowBackup` is off: a restored backup would contain a key blob that
-  cannot be decrypted on the new device.
+The server needs git 2.18 or newer — Strohhalm speaks protocol v2 only, and
+says so rather than silently falling back to a weaker protocol. Hosted forges
+(GitHub, GitLab, Codeberg, …) work as-is. A self-managed OpenSSH server must
+have `AcceptEnv GIT_PROTOCOL` in its `sshd_config`; without it the server
+answers with protocol v0 and Strohhalm reports that clearly instead of
+mirroring.
 
 ## Sync behaviour
 
-The interval will be configurable from 15 minutes to daily, or manual only.
+The interval is configurable from 15 minutes to daily, or manual only.
+Notifications appear only on failure; success is silent. A running sync shows
+a foreground notification with a Stop action.
 
-Syncing is registered without WorkManager constraints on purpose — a constraint
-defers work *silently*, and Strohhalm is built to tell you when a backup could
-not run. The worker checks free space, storage access and connectivity itself,
-and notifies when any of them blocks a sync.
+Syncing is registered without WorkManager constraints on purpose — a
+constraint defers work *silently*, and Strohhalm is built to tell you when a
+backup could not run. The worker checks free space, storage access and
+connectivity itself, and notifies when any of them blocks a sync.
 
-Notifications appear only on failure. Success is silent.
+A sync narrates itself: connecting, authenticating, reading the ref list,
+waiting for the server to gather objects, receiving the pack (with a running
+megabyte count), indexing, resolving deltas. Whatever the label under the
+ticking clock says is what the sync is actually doing — a slow network, a
+slow server and a hung transfer all look different.
+
+## Security design
+
+- An Ed25519 key is generated on device. The private key never leaves it:
+  only the 32-byte seed is stored, encrypted with AES-256-GCM under a key held
+  in the Android Keystore, in internal storage — never in the backup folder,
+  which is browsable and copied off-device by design.
+- Host keys are pinned when a repository is added. If a server later presents
+  a different key, syncing stops and you are notified rather than silently
+  trusting it.
+- `android:allowBackup` is off: a restored backup would contain a key blob
+  that cannot be decrypted on the new device.
+
+## What has been proven, and what has not
+
+Mirroring, host-key pinning, key handling and the storage flow are verified
+on real hardware against a real server, and a shared archive has been
+restored on a laptop: unpacked, `git fsck` clean, cloned, checked out.
+
+Two things have not been proven on a device yet: mirroring a genuinely large
+repository (tens of megabytes, tens of thousands of objects — covered by
+tests, never timed on a phone), and backup folders on removable SD cards
+(only device storage has been exercised). Treat both with appropriate
+suspicion.
+
+When something fails, the error screen shows the underlying message and
+exception chain with a **Copy diagnostics** button — deliberately visible
+rather than hidden behind a friendly summary.
+
+### The path probe
+
+When you choose a backup folder, Strohhalm writes `strohhalm-path-probe.txt`
+into it, recording the path it *believes* it wrote to. Deriving a real
+filesystem path from the Android folder picker relies on undocumented
+behaviour; finding that file yourself at the recorded path is what proves the
+mapping, and confirms the folder is reachable from outside the app. The file
+is safe to delete.
 
 ## Build
 
