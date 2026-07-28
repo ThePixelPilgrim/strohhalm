@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
 import de.nereide.strohhalm.ui.add.DiagnosticCard
+import de.nereide.strohhalm.ui.common.CalmIndeterminateBar
 import de.nereide.strohhalm.ui.common.SyncProgressBar
 import de.nereide.strohhalm.ui.common.syncErrorText
 
@@ -70,6 +71,11 @@ fun RepoDetailScreen(
     val progress by viewModel.progress.collectAsStateWithLifecycle()
     val pendingHostKey by viewModel.pendingHostKey.collectAsStateWithLifecycle()
     val shareState by viewModel.shareState.collectAsStateWithLifecycle()
+    val verifying by viewModel.verifying.collectAsStateWithLifecycle()
+    val probeError by viewModel.probeError.collectAsStateWithLifecycle()
+    // Computed here, not after `val current = repo ?: return@Scaffold`: the
+    // top-bar `actions` block renders before that point and needs it.
+    val unverified = repo != null && repo?.hostKeyFingerprint == null
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
     var alsoDeleteFiles by remember { mutableStateOf(false) }
@@ -98,12 +104,12 @@ fun RepoDetailScreen(
                         // that the button looks unavailable than dead.
                         IconButton(
                             onClick = { viewModel.syncNow() },
-                            enabled = shareState !is ShareState.Packing,
+                            enabled = shareState !is ShareState.Packing && !unverified,
                         ) {
                             Icon(Icons.Filled.Refresh, stringResource(R.string.list_sync_now))
                         }
                     }
-                    IconButton(onClick = { viewModel.share() }) {
+                    IconButton(onClick = { viewModel.share() }, enabled = !unverified) {
                         Icon(
                             imageVector = Icons.Default.Share,
                             contentDescription = stringResource(R.string.share_backup),
@@ -125,6 +131,52 @@ fun RepoDetailScreen(
                 .padding(16.dp)
         ) {
             SyncProgressBar(progress, onCancel = viewModel::cancelSync)
+
+            if (unverified) {
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        if (verifying) {
+                            Text(
+                                stringResource(R.string.detail_verifying),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            CalmIndeterminateBar(modifier = Modifier.fillMaxWidth())
+                        } else {
+                            Text(
+                                stringResource(R.string.detail_unverified_body),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = viewModel::verify) {
+                                Text(stringResource(R.string.detail_verify_now))
+                            }
+                        }
+                    }
+                }
+            }
+
+            probeError?.let { error ->
+                syncErrorText(error.code.name)?.let { message ->
+                    DiagnosticCard(
+                        message = message,
+                        detail = error.detail,
+                        diagnostic = error.diagnostic,
+                        onCopy = {
+                            val text = buildString {
+                                appendLine("Strohhalm verification failure")
+                                appendLine("remote=${current.remoteUrl}")
+                                appendLine("code=${error.code.name}")
+                                appendLine("detail=${error.detail}")
+                                appendLine("chain=${error.diagnostic}")
+                            }
+                            context.getSystemService(ClipboardManager::class.java)
+                                ?.setPrimaryClip(ClipData.newPlainText("Strohhalm diagnostics", text))
+                        }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
 
             when (val state = shareState) {
                 is ShareState.Idle -> Unit
@@ -202,7 +254,7 @@ fun RepoDetailScreen(
                     }
                 )
                 if (current.lastErrorCode == "HOST_KEY_MISMATCH") {
-                    Button(onClick = { viewModel.recheckHostKey() }) {
+                    Button(onClick = { viewModel.verify() }) {
                         Text(stringResource(R.string.detail_recheck_host_key))
                     }
                 }
@@ -252,18 +304,43 @@ fun RepoDetailScreen(
         }
     }
 
-    pendingHostKey?.let { fingerprint ->
+    pendingHostKey?.let { pending ->
+        val body = buildString {
+            append(
+                if (pending.firstTrust) {
+                    stringResource(R.string.add_fingerprint_body, pending.fingerprint)
+                } else {
+                    stringResource(R.string.detail_new_host_key_body, pending.fingerprint)
+                }
+            )
+            if (pending.authFailed) {
+                append("\n\n")
+                append(stringResource(R.string.detail_verify_auth_note))
+            }
+        }
         AlertDialog(
-            onDismissRequest = viewModel::dismissNewHostKey,
-            title = { Text(stringResource(R.string.detail_new_host_key_title)) },
-            text = { Text(stringResource(R.string.detail_new_host_key_body, fingerprint)) },
+            onDismissRequest = viewModel::dismissHostKey,
+            title = {
+                Text(
+                    stringResource(
+                        if (pending.firstTrust) R.string.add_fingerprint_title
+                        else R.string.detail_new_host_key_title
+                    )
+                )
+            },
+            text = { Text(body) },
             confirmButton = {
-                TextButton(onClick = viewModel::confirmNewHostKey) {
-                    Text(stringResource(R.string.detail_new_host_key_accept))
+                TextButton(onClick = viewModel::confirmHostKey) {
+                    Text(
+                        stringResource(
+                            if (pending.firstTrust) R.string.add_fingerprint_accept
+                            else R.string.detail_new_host_key_accept
+                        )
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = viewModel::dismissNewHostKey) {
+                TextButton(onClick = viewModel::dismissHostKey) {
                     Text(stringResource(R.string.cancel))
                 }
             }

@@ -140,20 +140,28 @@ private fun RepoRow(repo: Repo, onClick: () -> Unit) {
 }
 
 @Composable
-private fun statusLine(repo: Repo): String = when (repo.lastStatus) {
-    SyncStatus.NEVER -> stringResource(R.string.status_never)
-    SyncStatus.SYNCING -> stringResource(R.string.status_syncing)
-    SyncStatus.OK -> stringResource(
-        R.string.status_ok,
-        repo.lastSyncAt?.let {
-            DateUtils.getRelativeTimeSpanString(
-                it,
-                System.currentTimeMillis(),
-                DateUtils.MINUTE_IN_MILLIS
-            )
-        } ?: ""
-    )
-    // Show what actually went wrong rather than a bare "Failed" — the whole
-    // point of the error taxonomy is that the user learns what to do next.
-    SyncStatus.FAILED -> syncErrorText(repo.lastErrorCode) ?: stringResource(R.string.status_failed)
+private fun statusLine(repo: Repo): String {
+    // No pinned key means syncs skip this row on purpose. Saying so beats
+    // "Never synced", which reads like nothing has happened yet.
+    if (repo.hostKeyFingerprint == null) {
+        return stringResource(R.string.status_unverified)
+    }
+    return when (repo.lastStatus) {
+        SyncStatus.NEVER -> stringResource(R.string.status_never)
+        SyncStatus.SYNCING -> stringResource(R.string.status_syncing)
+        SyncStatus.OK -> stringResource(
+            R.string.status_ok,
+            repo.lastSyncAt?.let {
+                DateUtils.getRelativeTimeSpanString(
+                    it,
+                    System.currentTimeMillis(),
+                    DateUtils.MINUTE_IN_MILLIS
+                )
+            } ?: ""
+        )
+        // Show what actually went wrong rather than a bare "Failed" — the whole
+        // point of the error taxonomy is that the user learns what to do next.
+        SyncStatus.FAILED ->
+            syncErrorText(repo.lastErrorCode) ?: stringResource(R.string.status_failed)
+    }
 }

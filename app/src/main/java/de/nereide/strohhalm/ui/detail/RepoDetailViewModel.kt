@@ -56,9 +56,23 @@ class RepoDetailViewModel(
     val syncing: StateFlow<Boolean> = syncRunner.running
     val progress: StateFlow<SyncProgress?> = syncRunner.progress
 
-    /** A freshly probed fingerprint awaiting the user's confirmation. */
-    private val _pendingHostKey = MutableStateFlow<String?>(null)
-    val pendingHostKey: StateFlow<String?> = _pendingHostKey.asStateFlow()
+    /** A probed fingerprint awaiting the user's confirmation. */
+    data class PendingHostKey(
+        val fingerprint: String,
+        /** The server refused auth — likely the public key is not installed yet. */
+        val authFailed: Boolean,
+        /** No key was pinned before: accepting also starts the first sync. */
+        val firstTrust: Boolean,
+    )
+
+    private val _pendingHostKey = MutableStateFlow<PendingHostKey?>(null)
+    val pendingHostKey: StateFlow<PendingHostKey?> = _pendingHostKey.asStateFlow()
+
+    private val _verifying = MutableStateFlow(false)
+    val verifying: StateFlow<Boolean> = _verifying.asStateFlow()
+
+    private val _probeError = MutableStateFlow<SyncError?>(null)
+    val probeError: StateFlow<SyncError?> = _probeError.asStateFlow()
 
     private val _refs = MutableStateFlow<List<String>>(emptyList())
     val refs: StateFlow<List<String>> = _refs.asStateFlow()
@@ -213,6 +227,12 @@ class RepoDetailViewModel(
     private class ArchiveRefused(val error: SyncError) : Exception(error.detail)
 
     init {
+        // A just-added repository has no pinned key; verification is this
+        // screen's opening move, not something the user must discover.
+        viewModelScope.launch {
+            val current = repository.observe(id).first()
+            if (current != null && current.hostKeyFingerprint == null) verify()
+        }
         loadRefs()
         // Re-read the refs whenever a sync finishes, so the list reflects what
         // was just fetched without the user navigating away and back.
@@ -263,28 +283,47 @@ class RepoDetailViewModel(
     }
 
     /**
-     * Asks the server for its host key again. Used when the pinned key no longer
-     * matches — a server rebuild is legitimate, so there has to be a way forward
-     * that is not "delete and re-add", but it still requires the user to look at
-     * the new fingerprint and accept it.
+     * Asks the server for its host key in the background. Serves both the
+     * first verification of a just-added repository and the deliberate
+     * re-check after a mismatch; either way the user sees the fingerprint
+     * before anything is pinned.
      */
-    fun recheckHostKey() {
+    fun verify() {
+        if (_verifying.value) return
+        _verifying.value = true
+        _probeError.value = null
         viewModelScope.launch {
-            val current = repository.observe(id).first() ?: return@launch
-            mirror.probeHostKey(current.remoteUrl)
-                .onSuccess { _pendingHostKey.value = it }
+            try {
+                val current = repository.observe(id).first() ?: return@launch
+                val firstTrust = current.hostKeyFingerprint == null
+                when (val outcome = VerifyRules.fromProbe(mirror.probeHostKey(current.remoteUrl))) {
+                    is VerifyOutcome.Pending -> _pendingHostKey.value = PendingHostKey(
+                        fingerprint = outcome.fingerprint,
+                        authFailed = outcome.authFailed,
+                        firstTrust = firstTrust,
+                    )
+                    is VerifyOutcome.Failed -> _probeError.value = outcome.error
+                }
+            } finally {
+                _verifying.value = false
+            }
         }
     }
 
-    fun confirmNewHostKey() {
-        val fingerprint = _pendingHostKey.value ?: return
+    fun confirmHostKey() {
+        val pending = _pendingHostKey.value ?: return
         viewModelScope.launch {
-            repository.updateHostKey(id, fingerprint)
+            repository.updateHostKey(id, pending.fingerprint)
             _pendingHostKey.value = null
+            // The whole point of confirming was to mirror; do not make the
+            // user find the sync button next. Refused harmlessly if the key
+            // is not on the server yet — the row then shows the auth failure
+            // and the key-setup card.
+            if (pending.firstTrust) syncRunner.launchSyncOne(id)
         }
     }
 
-    fun dismissNewHostKey() {
+    fun dismissHostKey() {
         _pendingHostKey.value = null
     }
 
