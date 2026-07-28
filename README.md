@@ -36,8 +36,13 @@ only read with the tool that made it is not a backup.
 2. Choose or create a backup folder.
 3. Copy the public key from Settings into your server's `authorized_keys`, or
    add it as a read-only deploy key.
-4. Add a repository by its `ssh://` or `git@host:path` URL and confirm the
-   host key fingerprint.
+4. Add a repository by its `ssh://` or `git@host:path` URL. Adding never
+   touches the network: the server is verified in the background from the
+   repository's page, where you confirm the host key fingerprint — offered
+   even while the server still refuses authentication, so a repository can
+   be added before its key is installed. When authentication fails, the app
+   shows the fix: copy the public key, and for GitHub or Codeberg a link to
+   the exact settings page it belongs on.
 
 ### Server requirements
 
