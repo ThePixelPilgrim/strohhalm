@@ -21,13 +21,21 @@ class KotlinPackIndexerTest {
      * JGit is allowed in tests as a fixture builder; it is only unusable as the
      * engine because it cannot read SHA-256.
      */
-    private fun sha1PackBytes(fileCount: Int): ByteArray {
+    private fun sha1PackBytes(fileCount: Int, bigBlobMiB: Int = 0): ByteArray {
         val work = temp.newFolder("work")
         Git.init().setDirectory(work).call().use { git ->
             repeat(fileCount) { i ->
                 File(work, "file$i.txt").writeText("content $i\n".repeat(i + 1))
                 git.add().addFilepattern("file$i.txt").call()
                 git.commit().setMessage("commit $i").setSign(false).call()
+            }
+            if (bigBlobMiB > 0) {
+                // Random bytes, so deflate cannot shrink them and the pack
+                // actually carries the size the test asks for.
+                File(work, "big.bin")
+                    .writeBytes(kotlin.random.Random(42).nextBytes(bigBlobMiB * 1024 * 1024))
+                git.add().addFilepattern("big.bin").call()
+                git.commit().setMessage("big blob").setSign(false).call()
             }
             val packDir = temp.newFolder("packout")
             git.repository.newObjectReader().use { reader ->
@@ -103,6 +111,38 @@ class KotlinPackIndexerTest {
                 null,
             )
         }
+    }
+
+    /**
+     * The download is the longest phase of a large mirror, and the server says
+     * nothing new while it runs — its last "Compressing objects, done." would
+     * sit on screen for minutes looking exactly like a hang. The receive loop
+     * sees every byte, so it reports the running total itself.
+     */
+    @Test
+    fun `receiving the pack is reported as the bytes stream in`() {
+        val objects = temp.newFolder("objects")
+        val bytes = sha1PackBytes(fileCount = 2, bigBlobMiB = 3)
+        assertTrue("fixture pack is large enough", bytes.size > 3 * 1024 * 1024)
+
+        val tasks = mutableListOf<String>()
+        KotlinPackIndexer().consume(
+            ByteArrayInputStream(bytes),
+            ObjectHash.SHA1,
+            objects,
+        ) { task, _, _ -> tasks.add(task) }
+
+        assertEquals("the receive phase announces itself first",
+            "Receiving the pack", tasks.first())
+        assertTrue("megabytes are counted in $tasks",
+            tasks.contains("Receiving the pack (1 MiB)"))
+        assertTrue("the count advances in $tasks",
+            tasks.contains("Receiving the pack (3 MiB)"))
+
+        val lastReceiving = tasks.indexOfLast { it.startsWith("Receiving the pack") }
+        val firstIndexing = tasks.indexOfFirst { it.startsWith("Indexing objects") }
+        assertTrue("indexing reported", firstIndexing >= 0)
+        assertTrue("receiving completes before indexing", lastReceiving < firstIndexing)
     }
 
     /**

@@ -42,7 +42,7 @@ class KotlinPackIndexer : PackIndexer {
         val temporary = File.createTempFile("incoming-", ".pack", packDir)
 
         try {
-            val checksum = writeToDisk(pack, temporary, hash)
+            val checksum = writeToDisk(pack, temporary, hash, progress)
             val entries = RandomAccessFile(temporary, "r").use { file ->
                 scan(file, hash, progress)
             }
@@ -71,10 +71,23 @@ class KotlinPackIndexer : PackIndexer {
      * until more input proves they were content. The trailer still belongs in
      * the file: git's own tools expect every `.pack` to end with its checksum.
      */
-    private fun writeToDisk(pack: InputStream, target: File, hash: ObjectHash): ByteArray {
+    private fun writeToDisk(
+        pack: InputStream,
+        target: File,
+        hash: ObjectHash,
+        progress: MirrorProgress?,
+    ): ByteArray {
         val digest = hash.newDigest()
         val carry = ByteArray(hash.rawLength)
         var carried = 0
+
+        // The download is the longest phase of a large mirror, and the server
+        // says nothing while it runs — its last progress line would sit on
+        // screen for minutes looking like a hang. This loop sees every byte,
+        // so it is the one place that can report a running total.
+        progress?.update(RECEIVING, 0, 0)
+        var received = 0L
+        var reportedMiB = 0L
 
         target.outputStream().buffered().use { out ->
             val buffer = ByteArray(BUFFER)
@@ -84,6 +97,13 @@ class KotlinPackIndexer : PackIndexer {
                 }
                 val read = pack.read(buffer)
                 if (read < 0) break
+
+                received += read
+                val mib = received shr 20
+                if (mib > reportedMiB) {
+                    reportedMiB = mib
+                    progress?.update("$RECEIVING ($mib MiB)", 0, 0)
+                }
 
                 // Emit in bulk, not byte-at-a-time: this loop sees every byte of
                 // a transfer, and 44 MiB of single-byte digest updates is the
@@ -319,5 +339,8 @@ class KotlinPackIndexer : PackIndexer {
         const val BUFFER = 64 * 1024
         const val CACHE_LIMIT = 256
         const val PROGRESS_EVERY = 256
+
+        /** Task label for the download; the running MiB total is appended. */
+        const val RECEIVING = "Receiving the pack"
     }
 }
