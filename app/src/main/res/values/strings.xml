@@ -72,6 +72,7 @@
     <string name="detail_last_attempt">Last attempt</string>
     <string name="detail_fingerprint">Host key</string>
     <string name="detail_never">Never</string>
+    <string name="detail_copy">Copy</string>
     <string name="detail_refs_title">Mirrored refs (%1$d)</string>
     <string name="detail_refs_body">Every branch and tag captured, including ones never checked out. This is what a plain clone would have missed.</string>
     <string name="detail_verifying">Verifying the server\'s identity…</string>

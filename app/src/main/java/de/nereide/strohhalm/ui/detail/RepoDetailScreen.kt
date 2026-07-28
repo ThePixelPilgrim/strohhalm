@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -282,7 +284,16 @@ fun RepoDetailScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            Field(stringResource(R.string.detail_remote), current.remoteUrl)
+            Field(
+                stringResource(R.string.detail_remote),
+                current.remoteUrl,
+                onCopy = {
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(
+                            ClipData.newPlainText("Strohhalm remote", current.remoteUrl)
+                        )
+                },
+            )
             Field(stringResource(R.string.detail_local), current.localPath)
             Field(
                 stringResource(R.string.detail_size),
@@ -400,15 +411,31 @@ fun RepoDetailScreen(
     }
 }
 
+/**
+ * [SelectionContainer] because these are exactly the values a user needs to
+ * get *out* of the app — an URL, a path, a fingerprint — and Compose text is
+ * otherwise a picture of a value, not a value. The remote additionally gets
+ * a one-tap copy: long-press selection on a phone is a chore.
+ */
 @Composable
-private fun Field(label: String, value: String) {
+private fun Field(label: String, value: String, onCopy: (() -> Unit)? = null) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium)
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelMedium)
+            if (onCopy != null) {
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = onCopy) {
+                    Text(stringResource(R.string.detail_copy))
+                }
+            }
+        }
+        SelectionContainer {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        }
     }
 }
 
