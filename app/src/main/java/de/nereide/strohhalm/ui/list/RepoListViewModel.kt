@@ -10,6 +10,7 @@ import de.nereide.strohhalm.domain.SyncProgress
 import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.ui.common.appContainer
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -35,7 +36,9 @@ class RepoListViewModel(
     val syncing: StateFlow<Boolean> = syncRunner.running
     val progress: StateFlow<SyncProgress?> = syncRunner.progress
 
-    fun syncAll() = syncRunner.launchSyncAll()
+    fun syncAll() {
+        viewModelScope.launch { syncRunner.launchSyncAll() }
+    }
 
     fun cancelSync() = syncRunner.cancel()
 

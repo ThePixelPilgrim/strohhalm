@@ -88,7 +88,7 @@ fun AddRepoScreen(
 
             Button(
                 onClick = viewModel::add,
-                enabled = uiState.url.isNotBlank(),
+                enabled = uiState.url.isNotBlank() && !uiState.saving,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.add_save))
@@ -98,6 +98,15 @@ fun AddRepoScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.add_url_invalid),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            uiState.saveError?.let { reason ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.add_save_failed, reason),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )

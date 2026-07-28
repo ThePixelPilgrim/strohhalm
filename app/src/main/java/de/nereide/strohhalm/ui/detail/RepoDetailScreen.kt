@@ -77,6 +77,7 @@ fun RepoDetailScreen(
     val verifying by viewModel.verifying.collectAsStateWithLifecycle()
     val probeError by viewModel.probeError.collectAsStateWithLifecycle()
     val publicKey by viewModel.publicKey.collectAsStateWithLifecycle()
+    val remoteHost by viewModel.remoteHost.collectAsStateWithLifecycle()
     // Computed here, not after `val current = repo ?: return@Scaffold`: the
     // top-bar `actions` block renders before that point and needs it.
     val unverified = repo != null && repo?.hostKeyFingerprint == null
@@ -127,11 +128,6 @@ fun RepoDetailScreen(
         }
     ) { padding ->
         val current = repo ?: return@Scaffold
-        val remoteHost = remember(current.remoteUrl) {
-            runCatching {
-                de.nereide.strohhalm.domain.git.GitRemote.parse(current.remoteUrl).host
-            }.getOrNull()
-        }
         val copyPublicKey = {
             publicKey?.let { line ->
                 context.getSystemService(ClipboardManager::class.java)
@@ -194,8 +190,14 @@ fun RepoDetailScreen(
                 }
             }
 
-            if (probeError?.code == SyncErrorCode.AUTH_FAILED && remoteHost != null) {
-                KeySetupCard(host = remoteHost, publicKey = publicKey, onCopyKey = copyPublicKey)
+            // One render site for both auth-failure sources — the live probe
+            // and the row's persisted error — so the card can never stack.
+            val authFailing = probeError?.code == SyncErrorCode.AUTH_FAILED ||
+                current.lastErrorCode == SyncErrorCode.AUTH_FAILED.name
+            remoteHost?.let { host ->
+                if (authFailing) {
+                    KeySetupCard(host = host, publicKey = publicKey, onCopyKey = copyPublicKey)
+                }
             }
 
             when (val state = shareState) {
@@ -277,9 +279,6 @@ fun RepoDetailScreen(
                     Button(onClick = { viewModel.verify() }) {
                         Text(stringResource(R.string.detail_recheck_host_key))
                     }
-                }
-                if (current.lastErrorCode == SyncErrorCode.AUTH_FAILED.name && remoteHost != null) {
-                    KeySetupCard(host = remoteHost, publicKey = publicKey, onCopyKey = copyPublicKey)
                 }
                 Spacer(Modifier.height(16.dp))
             }

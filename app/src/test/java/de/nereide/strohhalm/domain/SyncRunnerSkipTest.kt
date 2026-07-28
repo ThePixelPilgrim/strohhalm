@@ -8,7 +8,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -81,5 +83,41 @@ class SyncRunnerSkipTest {
 
         assertEquals(0, syncCalls.get())
         assertEquals(SyncStatus.NEVER, dao.byId(id)!!.lastStatus)
+    }
+
+    /**
+     * Skipping is not starting. The contract on the return value —
+     * "`false` means nothing is coming" — is what `retrySync` builds its
+     * share-card state on, and a `true` for a skipped repository would leave
+     * that card waiting for a completion that never arrives.
+     */
+    @Test
+    fun `skipping is not starting - the caller is told nothing is coming`() = runBlocking {
+        val id = repos.add("Pending", "ssh://git@host/srv/pending.git", null)
+
+        assertFalse("sync-one of an unverified repo starts nothing", runner.launchSyncOne(id))
+        assertFalse("sync-all with nothing verified starts nothing", runner.launchSyncAll())
+        assertEquals(0, syncCalls.get())
+    }
+
+    /**
+     * A skipped sync must not touch shared state either: no running flip that
+     * flashes the spinner, and no mirror-lock acquisition that a concurrent
+     * share would lose against.
+     */
+    @Test
+    fun `skipping takes neither the running flag nor the mirror lock`() = runBlocking {
+        val access = MirrorAccess()
+        val guarded = SyncRunner(repos, countingMirror, scope, NoForegroundHold, access)
+        repos.add("Pending", "ssh://git@host/srv/pending.git", null)
+
+        guarded.launchSyncAll()
+
+        assertFalse("running never rose for a skip", guarded.running.value)
+        assertTrue(
+            "the mirror lock was never taken",
+            access.tryAcquire(MirrorAccess.Owner.ARCHIVE),
+        )
+        access.release(MirrorAccess.Owner.ARCHIVE)
     }
 }

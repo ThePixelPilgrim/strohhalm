@@ -59,6 +59,7 @@
     <string name="add_name_label">Name (optional)</string>
     <string name="add_save">Add repository</string>
     <string name="add_url_invalid">This is not an SSH remote. Use ssh://user@host/path or user@host:path.</string>
+    <string name="add_save_failed">The repository could not be saved: %1$s</string>
     <string name="add_fingerprint_title">Trust this server?</string>
     <string name="add_fingerprint_body">Strohhalm has not seen this server before. Check that the fingerprint matches the one on your server, then accept it. It will be remembered, and you will be warned if it ever changes.\n\n%1$s</string>
     <string name="add_fingerprint_accept">Trust and add</string>

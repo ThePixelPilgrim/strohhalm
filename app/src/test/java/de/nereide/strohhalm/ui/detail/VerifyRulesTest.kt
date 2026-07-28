@@ -3,6 +3,7 @@ package de.nereide.strohhalm.ui.detail
 import de.nereide.strohhalm.domain.ProbeRejectedException
 import de.nereide.strohhalm.domain.SyncErrorCode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.net.UnknownHostException
 
@@ -60,5 +61,23 @@ class VerifyRulesTest {
             SyncErrorCode.HOST_UNREACHABLE,
             (outcome as VerifyOutcome.Failed).error.code,
         )
+    }
+
+    /**
+     * Declining the fingerprint must not erase what the probe learned: the
+     * server refused authentication, and that is the state the key-setup card
+     * is driven by. Dismissing an ordinary offer leaves nothing behind.
+     */
+    @Test
+    fun `dismissing an auth-flagged offer keeps the auth failure`() {
+        assertEquals(
+            SyncErrorCode.AUTH_FAILED,
+            VerifyRules.onDismiss(authFailed = true)?.code,
+        )
+    }
+
+    @Test
+    fun `dismissing an ordinary offer leaves no error`() {
+        assertNull(VerifyRules.onDismiss(authFailed = false))
     }
 }

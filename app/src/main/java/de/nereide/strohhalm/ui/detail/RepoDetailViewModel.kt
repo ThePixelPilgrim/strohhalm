@@ -21,6 +21,7 @@ import de.nereide.strohhalm.domain.archive.ArchiveStore
 import de.nereide.strohhalm.domain.archive.CacheSpace
 import de.nereide.strohhalm.domain.archive.RefFingerprint
 import de.nereide.strohhalm.domain.archive.reserveOrRefuse
+import de.nereide.strohhalm.domain.git.GitRemote
 import de.nereide.strohhalm.domain.git.MirrorRepository
 import de.nereide.strohhalm.ui.common.appContainer
 import kotlinx.coroutines.CancellationException
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
@@ -49,6 +51,19 @@ class RepoDetailViewModel(
 ) : ViewModel() {
 
     val repo: StateFlow<Repo?> = repository.observe(id)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * The remote's host, for the key-setup card. Derived here rather than in
+     * the screen: parsing the URL is a domain concern, and the screen should
+     * not reach into the transport package for it.
+     */
+    val remoteHost: StateFlow<String?> = repository.observe(id)
+        .map { current ->
+            current?.remoteUrl?.let { url ->
+                runCatching { GitRemote.parse(url).host }.getOrNull()
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _deleted = MutableStateFlow(false)
@@ -110,13 +125,15 @@ class RepoDetailViewModel(
 
     fun retrySync() {
         if (repo.value == null) return
-        // Only wait for a sync that exists. The launch is refused while an
-        // archive holds the mirror, and moving to Waiting on the strength of the
-        // tap alone would leave the card waiting for a completion that never
-        // arrives — `running` never rises, so the collector never fires.
-        val started = syncRunner.launchSyncOne(id)
-        if (!started && !syncRunner.running.value) return
-        _shareState.value = ShareRules.onRetry()
+        viewModelScope.launch {
+            // Only wait for a sync that exists. The launch is refused while an
+            // archive holds the mirror, and moving to Waiting on the strength of
+            // the tap alone would leave the card waiting for a completion that
+            // never arrives — `running` never rises, so the collector never fires.
+            val started = syncRunner.launchSyncOne(id)
+            if (!started && !syncRunner.running.value) return@launch
+            _shareState.value = ShareRules.onRetry()
+        }
     }
 
     /** Back, or Stop while packing. Stop means stop, not pause. */
@@ -273,7 +290,7 @@ class RepoDetailViewModel(
     fun cancelSync() = syncRunner.cancel()
 
     fun syncNow() {
-        syncRunner.launchSyncOne(id)
+        viewModelScope.launch { syncRunner.launchSyncOne(id) }
         // Refs are re-read when the runner goes idle again, below.
     }
 
@@ -333,7 +350,11 @@ class RepoDetailViewModel(
     }
 
     fun dismissHostKey() {
+        val pending = _pendingHostKey.value ?: return
         _pendingHostKey.value = null
+        // Declining must not erase what the probe learned: an auth refusal
+        // keeps driving the key-setup card until a probe or sync succeeds.
+        VerifyRules.onDismiss(pending.authFailed)?.let { _probeError.value = it }
     }
 
     fun delete(alsoDeleteFiles: Boolean) {

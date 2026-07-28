@@ -16,6 +16,10 @@ data class AddRepoUiState(
     val url: String = "",
     val name: String = "",
     val invalidUrl: Boolean = false,
+    /** A save is in flight; the button stays down so a double tap cannot add twice. */
+    val saving: Boolean = false,
+    /** The save itself failed — e.g. no storage root configured. */
+    val saveError: String? = null,
     /** Set once the row exists; navigation to its detail view follows. */
     val savedId: Long? = null,
 )
@@ -44,19 +48,31 @@ class AddRepoViewModel(
 
     fun add() {
         val state = _uiState.value
+        if (state.saving) return
         val url = state.url.trim()
         if (url.isEmpty()) return
         if (runCatching { GitRemote.parse(url) }.isFailure) {
             _uiState.value = state.copy(invalidUrl = true)
             return
         }
+        _uiState.value = state.copy(saving = true, saveError = null)
         viewModelScope.launch {
-            val id = repository.add(
-                displayName = state.name.trim(),
-                remoteUrl = url,
-                hostKeyFingerprint = null,
-            )
-            _uiState.value = _uiState.value.copy(savedId = id)
+            // The save can genuinely fail — no storage root configured, say —
+            // and an uncaught throw here would take the whole process down.
+            runCatching {
+                repository.add(
+                    displayName = state.name.trim(),
+                    remoteUrl = url,
+                    hostKeyFingerprint = null,
+                )
+            }.onSuccess { id ->
+                _uiState.value = _uiState.value.copy(saving = false, savedId = id)
+            }.onFailure { t ->
+                _uiState.value = _uiState.value.copy(
+                    saving = false,
+                    saveError = t.message ?: t::class.java.simpleName,
+                )
+            }
         }
     }
 

@@ -64,23 +64,29 @@ class SyncRunner(
 
     /**
      * Ignored while a sync is already in flight — two clones into one directory
-     * would collide — or while an archive holds the mirror.
+     * would collide — or while an archive holds the mirror. A repository with
+     * no pinned host key is refused *here*, before anything is acquired:
+     * skipping is not starting, and a skip must neither flash the running
+     * state nor take the mirror lock from a concurrent share.
      *
      * @return whether a sync actually started. A caller that changes its own
      *   state on the strength of the launch has to know: `false` means nothing
      *   is coming, and waiting for it would wait for ever.
      */
-    fun launchSyncOne(id: Long): Boolean = launch {
-        repos.all().firstOrNull { it.id == id }
+    suspend fun launchSyncOne(id: Long): Boolean {
+        val repo = repos.all().firstOrNull { it.id == id }
             ?.takeIf { it.hostKeyFingerprint != null }
-            ?.let { sync(it) }
+            ?: return false
+        return launch { sync(repo) }
     }
 
     /** @return whether a sync actually started; see [launchSyncOne]. */
-    fun launchSyncAll(): Boolean = launch {
+    suspend fun launchSyncAll(): Boolean {
         // Unverified repositories are skipped silently: contacting them would
         // only manufacture the refusal the UI already explains, once per cycle.
-        repos.all().filter { it.hostKeyFingerprint != null }.forEach { sync(it) }
+        val verified = repos.all().filter { it.hostKeyFingerprint != null }
+        if (verified.isEmpty()) return false
+        return launch { verified.forEach { sync(it) } }
     }
 
     private fun launch(block: suspend () -> Unit): Boolean {

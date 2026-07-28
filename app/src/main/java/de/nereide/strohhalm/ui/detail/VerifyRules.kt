@@ -24,6 +24,22 @@ sealed interface VerifyOutcome {
  */
 object VerifyRules {
 
+    /**
+     * What declining a pending fingerprint leaves behind. Declining an
+     * auth-flagged offer must not erase what the probe learned — the server
+     * refused authentication, and the key-setup card is driven by exactly
+     * that state. A declined ordinary offer leaves nothing.
+     */
+    fun onDismiss(authFailed: Boolean): SyncError? =
+        if (authFailed) {
+            SyncError(
+                SyncErrorCode.AUTH_FAILED,
+                "the server refused the key this device signs with",
+            )
+        } else {
+            null
+        }
+
     fun fromProbe(result: Result<String>): VerifyOutcome = result.fold(
         onSuccess = { VerifyOutcome.Pending(it, authFailed = false) },
         onFailure = { failure ->
