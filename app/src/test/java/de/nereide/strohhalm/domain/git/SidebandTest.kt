@@ -35,6 +35,29 @@ class SidebandTest {
         assertEquals(listOf("Counting objects: 5"), seen)
     }
 
+    /**
+     * git updates a progress line in place by ending it with a carriage return,
+     * and a single sideband payload routinely carries several such updates
+     * glued together. Each one is a complete label of its own; handed over
+     * unsplit they render as one garbled multi-line string in the UI.
+     */
+    @Test
+    fun `carriage-return updates in one payload arrive as separate labels`() {
+        val seen = mutableListOf<String>()
+        val stream = SidebandInputStream(
+            wire(2 to "Counting objects:  50% (1/2)\rCounting objects: 100% (2/2)\rCounting objects: 100% (2/2), done.\n", 1 to "PACK")
+        ) { seen += it }
+        assertArrayEquals("PACK".toByteArray(), stream.readBytes())
+        assertEquals(
+            listOf(
+                "Counting objects:  50% (1/2)",
+                "Counting objects: 100% (2/2)",
+                "Counting objects: 100% (2/2), done.",
+            ),
+            seen,
+        )
+    }
+
     @Test
     fun `band 3 raises the server's own message`() {
         val stream = SidebandInputStream(wire(3 to "repository not found")) {}

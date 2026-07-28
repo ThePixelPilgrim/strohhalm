@@ -104,7 +104,13 @@ class UploadPackChannel(
     lateinit var output: OutputStream
         private set
 
-    fun open() {
+    /**
+     * [notify] names each step as it begins. Everything here used to hide
+     * behind one static "Contacting the server" label, which made a slow DNS
+     * lookup, a slow handshake and a slow server indistinguishable — and on a
+     * phone network the connect alone can plausibly take longest.
+     */
+    fun open(notify: (String) -> Unit = {}) {
         val ssh = SshClient.setUpDefaultClient().apply {
             serverKeyVerifier = org.apache.sshd.client.keyverifier.ServerKeyVerifier { _, _, key ->
                 val algorithm = key?.algorithm ?: "unknown"
@@ -154,10 +160,12 @@ class UploadPackChannel(
         }
         client = ssh
 
+        notify("Connecting to ${remote.host}")
         val opened = ssh.connect(remote.user, remote.host, remote.port)
             .verify(timeout)
             .clientSession
         session = opened
+        notify("Authenticating")
         opened.addPublicKeyIdentity(keyPair)
         opened.auth().verify(timeout)
 

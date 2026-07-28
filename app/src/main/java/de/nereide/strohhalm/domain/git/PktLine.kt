@@ -132,9 +132,14 @@ class SidebandInputStream(
                             position = 0
                         }
 
+                        // Split on the carriage returns git uses to update a
+                        // line in place: one payload routinely carries several
+                        // updates glued together, and each is a whole label.
                         BAND_PROGRESS ->
-                            String(payload, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                                ?.let(onProgress)
+                            String(payload, Charsets.UTF_8).split('\r', '\n')
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                                .forEach(onProgress)
 
                         BAND_ERROR ->
                             throw SidebandException(String(payload, Charsets.UTF_8).trim())

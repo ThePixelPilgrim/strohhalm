@@ -116,7 +116,7 @@ class ProtocolMirror(
             timeout = TIMEOUT,
         ).use { channel ->
             try {
-                channel.open()
+                channel.open { stage -> progress?.update(stage, 0, 0) }
             } catch (t: Throwable) {
                 // A refused host key surfaces as a bare transport failure —
                 // SSHD closes the session without propagating the cause — so
@@ -126,6 +126,9 @@ class ProtocolMirror(
                 throw t
             }
 
+            // Covers the advertisement and ls-refs round trips together: the
+            // user-visible unit is "the server is telling us what it has".
+            progress?.update("Reading the ref list", 0, 0)
             val protocol = UploadPackV2(channel.input, channel.output)
             val caps = protocol.readAdvertisement()
             if (!mirror.exists()) mirror.initialise(caps.objectHash)
@@ -152,6 +155,11 @@ class ProtocolMirror(
                 return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
             }
 
+            // Shown until the server's own progress replaces it. For a large
+            // repository the server legitimately spends minutes enumerating and
+            // compressing before its first sideband line arrives, and that
+            // silence must carry a name of its own.
+            progress?.update("Waiting for the server to gather objects", 0, 0)
             val pack = protocol.fetch(caps, wants, haves) { line ->
                 progress?.update(line, 0, 0)
             }

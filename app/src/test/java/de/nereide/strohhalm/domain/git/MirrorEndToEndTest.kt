@@ -223,6 +223,46 @@ class MirrorEndToEndTest {
         git("verify-pack", "-v", idx.absolutePath, cwd = destination)
     }
 
+    /**
+     * Everything between "start" and the first byte of pack data used to hide
+     * behind one static label, so a slow connect, a slow handshake and a slow
+     * server were indistinguishable — on a phone that read as a hang. Each
+     * step now names itself, in the order the protocol actually runs them.
+     */
+    @Test
+    fun `progress names each stage before any data flows`() = runBlocking<Unit> {
+        val remote = remoteRepository()
+        val destination = File(temp.root, "mirror3.git")
+        val url = "ssh://test@127.0.0.1:${server.port}${remote.absolutePath}"
+        val fingerprint =
+            ProtocolMirror(keyPairProvider = { clientKey }).probeHostKey(url).getOrThrow()
+
+        val tasks = mutableListOf<String>()
+        val outcome = ProtocolMirror(keyPairProvider = { clientKey }).sync(
+            url,
+            destination,
+            fingerprint,
+            progress = { task, _, _ -> synchronized(tasks) { tasks.add(task) } },
+        )
+        assertTrue("mirror succeeded: $outcome", outcome is MirrorOutcome.Success)
+
+        val stages = listOf(
+            "Connecting to 127.0.0.1",
+            "Authenticating",
+            "Reading the ref list",
+            "Waiting for the server to gather objects",
+        )
+        val positions = stages.map { stage ->
+            tasks.indexOfFirst { it.startsWith(stage) }
+                .also { assertTrue("stage \"$stage\" reported in $tasks", it >= 0) }
+        }
+        assertEquals("stages arrive in protocol order", positions, positions.sorted())
+
+        val indexing = tasks.indexOfFirst { it.startsWith("Indexing objects") }
+        assertTrue("indexing reported in $tasks", indexing >= 0)
+        assertTrue("all stages precede indexing", positions.all { it < indexing })
+    }
+
     @Test
     fun `a second sync is incremental and still valid`() = runBlocking {
         val remote = remoteRepository()
