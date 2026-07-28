@@ -1,7 +1,5 @@
 package de.nereide.strohhalm.ui.add
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,11 +10,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,32 +21,29 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
-import de.nereide.strohhalm.ui.common.syncErrorText
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddRepoScreen(
     onDone: () -> Unit,
+    onAdded: (Long) -> Unit,
     viewModel: AddRepoViewModel = viewModel(factory = AddRepoViewModel.Factory)
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
-    LaunchedEffect(uiState.saved) {
-        if (uiState.saved) onDone()
+    LaunchedEffect(uiState.savedId) {
+        uiState.savedId?.let(onAdded)
     }
 
     Scaffold(
@@ -93,58 +86,23 @@ fun AddRepoScreen(
             )
             Spacer(Modifier.height(16.dp))
 
-            if (uiState.probing) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.add_checking))
-            } else {
-                Button(
-                    onClick = viewModel::probe,
-                    enabled = uiState.url.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.add_probe))
-                }
+            Button(
+                onClick = viewModel::add,
+                enabled = uiState.url.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.add_save))
             }
 
-            syncErrorText(uiState.errorCode)?.let { message ->
-                Spacer(Modifier.height(16.dp))
-                DiagnosticCard(
-                    message = message,
-                    detail = uiState.errorDetail,
-                    diagnostic = uiState.errorDiagnostic,
-                    onCopy = {
-                        val text = buildString {
-                            appendLine("Strohhalm add-repository failure")
-                            appendLine("url=${uiState.url}")
-                            appendLine("code=${uiState.errorCode}")
-                            appendLine("detail=${uiState.errorDetail}")
-                            appendLine("chain=${uiState.errorDiagnostic}")
-                        }
-                        context.getSystemService(ClipboardManager::class.java)
-                            ?.setPrimaryClip(ClipData.newPlainText("Strohhalm diagnostics", text))
-                    }
+            if (uiState.invalidUrl) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.add_url_invalid),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
                 )
             }
         }
-    }
-
-    uiState.fingerprint?.let { fingerprint ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissFingerprint,
-            title = { Text(stringResource(R.string.add_fingerprint_title)) },
-            text = { Text(stringResource(R.string.add_fingerprint_body, fingerprint)) },
-            confirmButton = {
-                TextButton(onClick = viewModel::confirmFingerprint) {
-                    Text(stringResource(R.string.add_fingerprint_accept))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::dismissFingerprint) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
-        )
     }
 }
 

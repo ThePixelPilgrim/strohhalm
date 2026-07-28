@@ -47,7 +47,16 @@ fun AppNavHost(
             )
         }
         composable(Routes.ADD) {
-            AddRepoScreen(onDone = { navController.popBackStack() })
+            AddRepoScreen(
+                onDone = { navController.popBackStack() },
+                onAdded = { id ->
+                    // The new repo's detail view takes over verification; Back
+                    // from there should land on the list, not the add form.
+                    navController.navigate(Routes.detail(id)) {
+                        popUpTo(Routes.LIST)
+                    }
+                },
+            )
         }
         composable(
             route = Routes.DETAIL,
