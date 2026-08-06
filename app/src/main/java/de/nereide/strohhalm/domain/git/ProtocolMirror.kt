@@ -126,48 +126,71 @@ class ProtocolMirror(
                 throw t
             }
 
-            // Covers the advertisement and ls-refs round trips together: the
-            // user-visible unit is "the server is telling us what it has".
-            progress?.update("Reading the ref list", 0, 0)
-            val protocol = UploadPackV2(channel.input, channel.output)
-            val caps = protocol.readAdvertisement()
-            if (!mirror.exists()) mirror.initialise(caps.objectHash)
-
-            val refs = protocol.lsRefs(caps)
-            if (refs.isEmpty()) {
-                // An empty remote is a valid mirror with nothing in it. The
-                // layout above was still written, so the folder exists and a
-                // later first commit upstream syncs into it as a plain fetch.
-                return MirrorOutcome.Success(sizeBytes(destination), 0)
+            try {
+                return runProtocol(channel, mirror, destination, progress)
+            } catch (t: Throwable) {
+                // Cancellation arrives as a thread interrupt; harvesting stderr
+                // for it would misreport a user action as a server fault.
+                if (t is InterruptedException || Thread.currentThread().isInterrupted) throw t
+                // The transport exception at this point is usually a bare end
+                // of stream — the server's actual explanation is sitting on
+                // stderr. Reading it is non-blocking (only what has already
+                // arrived), so this cannot recreate the unbounded-read hang
+                // the JGit engine's diagnostic probe suffered.
+                val said = channel.stderrText()
+                if (said.isBlank()) throw t
+                return MirrorOutcome.Failure(SyncErrors.fromServerMessage(said, t))
             }
+        }
+    }
 
-            val haves = mirror.localRefs().values.distinct()
-            val wants = refs.map { it.objectId }.distinct()
+    private fun runProtocol(
+        channel: UploadPackChannel,
+        mirror: MirrorRepository,
+        destination: File,
+        progress: MirrorProgress?,
+    ): MirrorOutcome {
+        // Covers the advertisement and ls-refs round trips together: the
+        // user-visible unit is "the server is telling us what it has".
+        progress?.update("Reading the ref list", 0, 0)
+        val protocol = UploadPackV2(channel.input, channel.output)
+        val caps = protocol.readAdvertisement()
+        if (!mirror.exists()) mirror.initialise(caps.objectHash)
 
-            // Steady state: nothing moved upstream since the last sync. Skip
-            // the fetch entirely — with `done` negotiation a server always
-            // sends a pack section, and at the 15-minute floor an unconditional
-            // fetch would accumulate tens of thousands of empty packs a year,
-            // each one another file for git to open.
-            val known = haves.toHashSet()
-            if (wants.all { it in known }) {
-                mirror.writeRefs(refs)
-                return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
-            }
+        val refs = protocol.lsRefs(caps)
+        if (refs.isEmpty()) {
+            // An empty remote is a valid mirror with nothing in it. The
+            // layout above was still written, so the folder exists and a
+            // later first commit upstream syncs into it as a plain fetch.
+            return MirrorOutcome.Success(sizeBytes(destination), 0)
+        }
 
-            // Shown until the server's own progress replaces it. For a large
-            // repository the server legitimately spends minutes enumerating and
-            // compressing before its first sideband line arrives, and that
-            // silence must carry a name of its own.
-            progress?.update("Waiting for the server to gather objects", 0, 0)
-            val pack = protocol.fetch(caps, wants, haves) { line ->
-                progress?.update(line, 0, 0)
-            }
-            indexer.consume(pack, caps.objectHash, mirror.objectsDir(), progress)
+        val haves = mirror.localRefs().values.distinct()
+        val wants = refs.map { it.objectId }.distinct()
 
+        // Steady state: nothing moved upstream since the last sync. Skip
+        // the fetch entirely — with `done` negotiation a server always
+        // sends a pack section, and at the 15-minute floor an unconditional
+        // fetch would accumulate tens of thousands of empty packs a year,
+        // each one another file for git to open.
+        val known = haves.toHashSet()
+        if (wants.all { it in known }) {
             mirror.writeRefs(refs)
             return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
         }
+
+        // Shown until the server's own progress replaces it. For a large
+        // repository the server legitimately spends minutes enumerating and
+        // compressing before its first sideband line arrives, and that
+        // silence must carry a name of its own.
+        progress?.update("Waiting for the server to gather objects", 0, 0)
+        val pack = protocol.fetch(caps, wants, haves) { line ->
+            progress?.update(line, 0, 0)
+        }
+        indexer.consume(pack, caps.objectHash, mirror.objectsDir(), progress)
+
+        mirror.writeRefs(refs)
+        return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
     }
 
     /**

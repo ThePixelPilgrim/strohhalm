@@ -74,6 +74,22 @@ class ProbeRejectedException(
  */
 object SyncErrors {
 
+    /**
+     * A failure for which the server's own stderr explanation is available.
+     *
+     * The words are classified first — "Permission denied" from a forge's serv
+     * command is still an auth failure, and downgrading it to REMOTE_ERROR
+     * would hide the copy-public-key fix the UI offers for AUTH_FAILED. Only
+     * an unrecognisable message falls back to REMOTE_ERROR. Either way the
+     * server's words become the detail, because they name the thing the user
+     * can act on — which the transport exception, a bare end-of-stream by the
+     * time the failure is observed, never does.
+     */
+    fun fromServerMessage(serverMessage: String, cause: Throwable): SyncError {
+        val code = classifyMessage(serverMessage)?.code ?: SyncErrorCode.REMOTE_ERROR
+        return SyncError(code, "the server said: $serverMessage", describeChain(cause))
+    }
+
     fun fromException(t: Throwable): SyncError {
         val diagnostic = describeChain(t)
         for (cause in causeChain(t)) {
@@ -139,8 +155,10 @@ object SyncErrors {
         else -> classifyByMessage(t)
     }
 
-    private fun classifyByMessage(t: Throwable): SyncError? {
-        val message = t.message ?: return null
+    private fun classifyByMessage(t: Throwable): SyncError? =
+        t.message?.let { classifyMessage(it) }
+
+    private fun classifyMessage(message: String): SyncError? {
         val lower = message.lowercase()
         return when {
             "auth fail" in lower ||
