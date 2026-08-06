@@ -95,6 +95,10 @@ class RepoDetailViewModel(
     private val _publicKey = MutableStateFlow<String?>(null)
     val publicKey: StateFlow<String?> = _publicKey.asStateFlow()
 
+    /** The edit-remote dialog's contents while it is open; null when closed. */
+    private val _editUrl = MutableStateFlow<String?>(null)
+    val editUrl: StateFlow<String?> = _editUrl.asStateFlow()
+
     private val _refs = MutableStateFlow<List<String>>(emptyList())
     val refs: StateFlow<List<String>> = _refs.asStateFlow()
 
@@ -355,6 +359,38 @@ class RepoDetailViewModel(
         // Declining must not erase what the probe learned: an auth refusal
         // keeps driving the key-setup card until a probe or sync succeeds.
         VerifyRules.onDismiss(pending.authFailed)?.let { _probeError.value = it }
+    }
+
+    /** Opens the edit-remote dialog, prefilled with the URL in force. */
+    fun editUrl() {
+        _editUrl.value = repo.value?.remoteUrl ?: return
+    }
+
+    fun editUrlChanged(text: String) {
+        // Ignored while the dialog is closed: a stray field callback must not
+        // reopen it.
+        if (_editUrl.value != null) _editUrl.value = text
+    }
+
+    fun dismissEditUrl() {
+        _editUrl.value = null
+    }
+
+    /**
+     * Persists the typed remote, if it says anything new. The dialog closes
+     * either way — the user confirmed, and a dialog that stays put after a tap
+     * reads as a failure.
+     */
+    fun confirmEditUrl() {
+        val typed = _editUrl.value ?: return
+        _editUrl.value = null
+        val next = EditUrlRules.urlToPersist(repo.value?.remoteUrl, typed) ?: return
+        viewModelScope.launch {
+            repository.updateRemoteUrl(id, next)
+            // The new server is unpinned now, so offer its fingerprint at once
+            // rather than making the user find "Verify" for themselves.
+            verify()
+        }
     }
 
     fun delete(alsoDeleteFiles: Boolean) {

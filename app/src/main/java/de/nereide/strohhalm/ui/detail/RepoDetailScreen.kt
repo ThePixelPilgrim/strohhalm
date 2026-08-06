@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +79,7 @@ fun RepoDetailScreen(
     val probeError by viewModel.probeError.collectAsStateWithLifecycle()
     val publicKey by viewModel.publicKey.collectAsStateWithLifecycle()
     val remoteHost by viewModel.remoteHost.collectAsStateWithLifecycle()
+    val editUrl by viewModel.editUrl.collectAsStateWithLifecycle()
     // Computed here, not after `val current = repo ?: return@Scaffold`: the
     // top-bar `actions` block renders before that point and needs it.
     val unverified = repo != null && repo?.hostKeyFingerprint == null
@@ -292,6 +294,7 @@ fun RepoDetailScreen(
                             ClipData.newPlainText("Strohhalm remote", current.remoteUrl)
                         )
                 },
+                onEdit = viewModel::editUrl,
             )
             Field(stringResource(R.string.detail_local), current.localPath)
             Field(
@@ -378,6 +381,39 @@ fun RepoDetailScreen(
         )
     }
 
+    editUrl?.let { typed ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissEditUrl,
+            title = { Text(stringResource(R.string.detail_edit_remote_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.detail_edit_remote_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = viewModel::editUrlChanged,
+                        label = { Text(stringResource(R.string.detail_edit_remote_label)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmEditUrl) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissEditUrl) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -417,7 +453,12 @@ fun RepoDetailScreen(
  * a one-tap copy: long-press selection on a phone is a chore.
  */
 @Composable
-private fun Field(label: String, value: String, onCopy: (() -> Unit)? = null) {
+private fun Field(
+    label: String,
+    value: String,
+    onCopy: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
+) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.labelMedium)
@@ -425,6 +466,11 @@ private fun Field(label: String, value: String, onCopy: (() -> Unit)? = null) {
                 Spacer(Modifier.width(4.dp))
                 TextButton(onClick = onCopy) {
                     Text(stringResource(R.string.detail_copy))
+                }
+            }
+            if (onEdit != null) {
+                TextButton(onClick = onEdit) {
+                    Text(stringResource(R.string.detail_edit_remote))
                 }
             }
         }
