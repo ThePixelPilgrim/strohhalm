@@ -136,6 +136,56 @@ class DefaultRepoRepositoryTest {
     }
 
     @Test
+    fun `updateRemoteUrl repoints the row and unpins the host key`() = runTest {
+        val id = repository.add("Notes", "ssh://old.host/srv/notes.git", "SHA256:aaa")
+
+        repository.updateRemoteUrl(id, "ssh://new.host/srv/notes.git")
+
+        val repo = dao.byId(id)!!
+        assertEquals("ssh://new.host/srv/notes.git", repo.remoteUrl)
+        assertNull("a new server must be trusted afresh", repo.hostKeyFingerprint)
+    }
+
+    @Test
+    fun `updateRemoteUrl trims the input`() = runTest {
+        val id = repository.add("Notes", "ssh://old.host/notes.git", "SHA256:aaa")
+
+        repository.updateRemoteUrl(id, "  ssh://new.host/notes.git\n")
+
+        assertEquals("ssh://new.host/notes.git", dao.byId(id)!!.remoteUrl)
+    }
+
+    @Test
+    fun `updateRemoteUrl keeps the mirror and its sync status`() = runTest {
+        val id = repository.add("Notes", "ssh://old.host/notes.git", "SHA256:aaa")
+        now = 2_000L
+        repository.markSuccess(id, sizeBytes = 4_096, refCount = 7)
+        val before = dao.byId(id)!!
+
+        repository.updateRemoteUrl(id, "ssh://new.host/notes.git")
+
+        val repo = dao.byId(id)!!
+        assertEquals("the mirror is the same content", before.localPath, repo.localPath)
+        assertEquals(SyncStatus.OK, repo.lastStatus)
+        assertEquals(2_000L, repo.lastSyncAt)
+        assertEquals(2_000L, repo.lastAttemptAt)
+        assertEquals(4_096L, repo.sizeBytes)
+        assertEquals(7, repo.refCount)
+        assertEquals(before.displayName, repo.displayName)
+    }
+
+    @Test
+    fun `updateRemoteUrl ignores a blank url`() = runTest {
+        val id = repository.add("Notes", "ssh://old.host/notes.git", "SHA256:aaa")
+
+        repository.updateRemoteUrl(id, "   ")
+
+        val repo = dao.byId(id)!!
+        assertEquals("ssh://old.host/notes.git", repo.remoteUrl)
+        assertEquals("SHA256:aaa", repo.hostKeyFingerprint)
+    }
+
+    @Test
     fun `resetStaleSyncing rewrites rows left mid-sync and leaves others alone`() = runTest {
         val stuck = repository.add("Stuck", "ssh://host/a.git", "SHA256:aaa")
         val fine = repository.add("Fine", "ssh://host/b.git", "SHA256:bbb")

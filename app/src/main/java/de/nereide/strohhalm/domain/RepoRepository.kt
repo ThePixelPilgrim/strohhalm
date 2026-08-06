@@ -31,6 +31,15 @@ interface RepoRepository {
     /** Re-pins the host key after the user has confirmed a new one. */
     suspend fun updateHostKey(id: Long, fingerprint: String)
 
+    /**
+     * Points the repository at [newUrl] after the user has migrated providers.
+     *
+     * Clears the pinned host key so the new server is trusted afresh through
+     * TOFU rather than reported as a mismatch. The local mirror and every
+     * sync-status field survive: the content is the same repository.
+     */
+    suspend fun updateRemoteUrl(id: Long, newUrl: String)
+
     /** Rewrites any row still marked SYNCING, after a process died mid-sync. */
     suspend fun resetStaleSyncing(error: SyncError)
 

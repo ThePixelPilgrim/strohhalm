@@ -85,6 +85,13 @@ class DefaultRepoRepository(
         dao.update(repo.copy(hostKeyFingerprint = fingerprint))
     }
 
+    override suspend fun updateRemoteUrl(id: Long, newUrl: String) {
+        val repo = dao.byId(id) ?: return
+        val trimmed = newUrl.trim()
+        if (trimmed.isEmpty()) return
+        dao.update(repo.copy(remoteUrl = trimmed, hostKeyFingerprint = null))
+    }
+
     override suspend fun resetStaleSyncing(error: SyncError) {
         dao.all()
             .filter { it.lastStatus == SyncStatus.SYNCING }
