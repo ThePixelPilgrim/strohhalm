@@ -14,19 +14,24 @@ import de.nereide.strohhalm.domain.SyncErrorCode
 fun syncErrorText(code: String?): String? {
     val parsed = code?.let { name -> SyncErrorCode.entries.firstOrNull { it.name == name } }
         ?: return null
-    return stringResource(
-        when (parsed) {
-            SyncErrorCode.NO_NETWORK -> R.string.error_no_network
-            SyncErrorCode.LOW_STORAGE -> R.string.error_low_storage
-            SyncErrorCode.PERMISSION_LOST -> R.string.error_permission_lost
-            SyncErrorCode.AUTH_FAILED -> R.string.error_auth_failed
-            SyncErrorCode.HOST_KEY_MISMATCH -> R.string.error_host_key_mismatch
-            SyncErrorCode.HOST_UNREACHABLE -> R.string.error_host_unreachable
-            SyncErrorCode.REMOTE_ERROR -> R.string.error_remote_error
-            SyncErrorCode.LOCAL_CORRUPT -> R.string.error_local_corrupt
-            SyncErrorCode.INTERRUPTED -> R.string.error_interrupted
-            SyncErrorCode.CANCELLED -> R.string.error_cancelled
-            SyncErrorCode.UNKNOWN -> R.string.error_unknown
-        }
-    )
+    return stringResource(parsed.messageRes())
+}
+
+/**
+ * The resource behind [syncErrorText], for callers outside composition such as
+ * the failure notification. Kept in the ui layer so the domain stays free of
+ * resource ids.
+ */
+fun SyncErrorCode.messageRes(): Int = when (this) {
+    SyncErrorCode.NO_NETWORK -> R.string.error_no_network
+    SyncErrorCode.LOW_STORAGE -> R.string.error_low_storage
+    SyncErrorCode.PERMISSION_LOST -> R.string.error_permission_lost
+    SyncErrorCode.AUTH_FAILED -> R.string.error_auth_failed
+    SyncErrorCode.HOST_KEY_MISMATCH -> R.string.error_host_key_mismatch
+    SyncErrorCode.HOST_UNREACHABLE -> R.string.error_host_unreachable
+    SyncErrorCode.REMOTE_ERROR -> R.string.error_remote_error
+    SyncErrorCode.LOCAL_CORRUPT -> R.string.error_local_corrupt
+    SyncErrorCode.INTERRUPTED -> R.string.error_interrupted
+    SyncErrorCode.CANCELLED -> R.string.error_cancelled
+    SyncErrorCode.UNKNOWN -> R.string.error_unknown
 }

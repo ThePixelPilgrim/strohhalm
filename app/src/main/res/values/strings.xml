@@ -46,6 +46,10 @@
     <string name="channel_problems_description">Warns when a backup could not run.</string>
     <string name="notification_progress_starting">Preparing…</string>
     <string name="notification_progress_title">Mirroring repositories</string>
+    <string name="notification_blocked_title">Backup could not run</string>
+    <string name="notification_failure_title">Backup of %1$s failed</string>
+    <string name="notification_failures_title">%1$d backups failed</string>
+    <string name="notification_failures_body">Open Strohhalm to see which repositories need attention.</string>
     <string name="progress_of">%1$s — %2$d of %3$d</string>
     <string name="progress_indeterminate">%1$s…</string>
     <string name="status_ok">Last synced %1$s</string>
@@ -124,6 +128,16 @@
     <string name="settings_key_regenerate_title">Regenerate the key?</string>
     <string name="settings_key_regenerate_body">A new key is generated and the current one stops working immediately. Every server has to be updated with the new public key before backups resume.</string>
     <string name="settings_notify_title">Notify when a backup fails</string>
+    <string name="settings_interval_title">Sync automatically</string>
+    <string name="settings_interval_body">Android may delay a scheduled sync to save battery, so the interval is a minimum, not a promise.</string>
+    <string name="settings_interval_manual">Manually only</string>
+    <string name="settings_interval_m15">Every 15 minutes</string>
+    <string name="settings_interval_m30">Every 30 minutes</string>
+    <string name="settings_interval_h1">Every hour</string>
+    <string name="settings_interval_h3">Every 3 hours</string>
+    <string name="settings_interval_h6">Every 6 hours</string>
+    <string name="settings_interval_h12">Every 12 hours</string>
+    <string name="settings_interval_d1">Daily</string>
     <string name="action_stop_sync">Stop</string>
 
     <!-- Share backup -->

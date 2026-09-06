@@ -3,6 +3,8 @@ package de.nereide.strohhalm
 import android.app.Application
 import de.nereide.strohhalm.domain.AndroidSystemReader
 import de.nereide.strohhalm.domain.SshdEnvironment
+import de.nereide.strohhalm.work.SyncScheduler
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -34,6 +36,18 @@ class StrohhalmApp : Application() {
         // implying work is happening when nothing is.
         container.applicationScope.launch {
             runCatching { container.syncRunner.resetStale() }
+        }
+
+        // The one place that talks to WorkManager. Observed rather than read
+        // once, so a change in Settings takes effect without a restart; applied
+        // on every start because a registration does not survive a reinstall,
+        // and UPDATE makes the repeat harmless.
+        container.applicationScope.launch {
+            container.settingsRepository.syncInterval
+                .distinctUntilChanged()
+                .collect { interval ->
+                    runCatching { SyncScheduler.apply(this@StrohhalmApp, interval) }
+                }
         }
     }
 

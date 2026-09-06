@@ -10,14 +10,16 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import de.nereide.strohhalm.MainActivity
 import de.nereide.strohhalm.R
+import de.nereide.strohhalm.domain.SyncError
+import de.nereide.strohhalm.ui.common.messageRes
 
 /**
- * Notification channels and the ongoing notification backing the sync
- * foreground service.
+ * Notification channels, the ongoing notification backing the sync foreground
+ * service, and the failure notifications posted by the scheduled sync.
  *
- * Failure notifications are not posted yet — syncing is manual, so the user is
- * already looking at the screen that reports the error. They arrive with the
- * background scheduler, which is when a silent failure would actually go unseen.
+ * Failures are only posted by the scheduler. A manual sync has the user
+ * looking at the screen that reports the error; a scheduled one runs while
+ * they are not, which is when a silent failure would go unseen.
  */
 class SyncNotifier(private val context: Context) {
 
@@ -59,6 +61,49 @@ class SyncNotifier(private val context: Context) {
                 stopSync(),
             )
             .build()
+
+    /**
+     * One notification per failure *category*, so a repository that keeps
+     * failing the same way replaces its own notification instead of stacking.
+     * [repoName] is null when the whole run was refused before any repository
+     * was contacted.
+     */
+    fun notifyFailure(error: SyncError, repoName: String?) {
+        val title = repoName
+            ?.let { context.getString(R.string.notification_failure_title, it) }
+            ?: context.getString(R.string.notification_blocked_title)
+        val notification = NotificationCompat.Builder(context, CHANNEL_PROBLEMS)
+            .setContentTitle(title)
+            .setContentText(context.getString(error.code.messageRes()))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                context.getString(error.code.messageRes())
+            ))
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentIntent(openApp())
+            .setAutoCancel(true)
+            .build()
+        // POST_NOTIFICATIONS may have been declined; a sync must not die for it.
+        runCatching { manager.notify(NotificationIds.forError(error.code), notification) }
+    }
+
+    /** Several repositories failed in one run: one summary rather than a stack. */
+    fun notifyFailureCount(count: Int) {
+        val notification = NotificationCompat.Builder(context, CHANNEL_PROBLEMS)
+            .setContentTitle(context.getString(R.string.notification_failures_title, count))
+            .setContentText(context.getString(R.string.notification_failures_body))
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentIntent(openApp())
+            .setAutoCancel(true)
+            .build()
+        runCatching { manager.notify(NotificationIds.FAILURE_SUMMARY, notification) }
+    }
+
+    /** A clean run retires every problem notification still showing. */
+    fun clearFailures() {
+        (NotificationIds.allErrorIds() + NotificationIds.FAILURE_SUMMARY).forEach { id ->
+            runCatching { manager.cancel(id) }
+        }
+    }
 
     private fun stopSync(): PendingIntent =
         PendingIntent.getService(

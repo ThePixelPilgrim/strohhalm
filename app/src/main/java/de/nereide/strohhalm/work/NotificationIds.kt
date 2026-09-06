@@ -11,6 +11,9 @@ object NotificationIds {
 
     const val PROGRESS: Int = 1
 
+    /** "N repositories failed" — one id, because there is only ever one summary. */
+    const val FAILURE_SUMMARY: Int = 2
+
     private const val ERROR_BASE = 100
 
     fun forError(code: SyncErrorCode): Int = ERROR_BASE + code.ordinal
