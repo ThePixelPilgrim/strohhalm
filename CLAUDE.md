@@ -169,6 +169,12 @@ Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation,
 through `v0.1.9` (mirror engine, SSH transport, host-key pinning, live progress, foreground
 service, cancellable syncs), and `v0.2.0` (the hash-agnostic mirror engine).
 
+**A sync activity log exists as of `v0.6.0`.** `SyncRunner` writes one `SyncEvent` per
+attempt through `SyncLog` (bytes received = pack transfer size from `PackResult.bytes`,
+refs changed, duration, trigger); `DefaultSyncLog` prunes to 30 days on each insert; the
+Activity screen off the repo list shows them, filtered to received-data entries by
+default. Spec: `docs/superpowers/specs/2026-09-06-sync-activity-log-design.md`.
+
 **Periodic sync exists as of `v0.5.0`.** Until then Task 9 was a third done:
 `SyncPreconditions` was written, but no worker was ever enqueued, so the stored
 interval was dead and only manual syncs ran. `SyncWorker` wraps `ScheduledSync`
