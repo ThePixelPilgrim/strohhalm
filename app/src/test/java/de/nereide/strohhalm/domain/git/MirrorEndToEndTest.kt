@@ -271,8 +271,17 @@ class MirrorEndToEndTest {
         val fingerprint = ProtocolMirror(keyPairProvider = { clientKey }).probeHostKey(url).getOrThrow()
         val mirror = ProtocolMirror(keyPairProvider = { clientKey })
 
-        assertTrue(mirror.sync(url, destination, fingerprint) is MirrorOutcome.Success)
-        assertTrue(mirror.sync(url, destination, fingerprint) is MirrorOutcome.Success)
+        val first = mirror.sync(url, destination, fingerprint)
+        assertTrue("first sync: $first", first is MirrorOutcome.Success)
+        first as MirrorOutcome.Success
+        assertTrue("the first sync received a pack", first.bytesReceived > 0)
+        assertEquals("every ref is new on a first sync", first.refCount, first.refsChanged)
+
+        val second = mirror.sync(url, destination, fingerprint)
+        assertTrue("second sync: $second", second is MirrorOutcome.Success)
+        second as MirrorOutcome.Success
+        assertEquals("nothing moved, nothing received", 0L, second.bytesReceived)
+        assertEquals("nothing moved, no ref changed", 0, second.refsChanged)
 
         assertTrue(git("fsck", "--strict", cwd = destination).isBlank())
     }

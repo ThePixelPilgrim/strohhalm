@@ -165,7 +165,8 @@ class ProtocolMirror(
             return MirrorOutcome.Success(sizeBytes(destination), 0)
         }
 
-        val haves = mirror.localRefs().values.distinct()
+        val before = mirror.localRefs()
+        val haves = before.values.distinct()
         val wants = refs.map { it.objectId }.distinct()
 
         // Steady state: nothing moved upstream since the last sync. Skip
@@ -187,10 +188,18 @@ class ProtocolMirror(
         val pack = protocol.fetch(caps, wants, haves) { line ->
             progress?.update(line, 0, 0)
         }
-        indexer.consume(pack, caps.objectHash, mirror.objectsDir(), progress)
+        val result = indexer.consume(pack, caps.objectHash, mirror.objectsDir(), progress)
 
         mirror.writeRefs(refs)
-        return MirrorOutcome.Success(sizeBytes(destination), mirror.refNames().size)
+        // HEAD is excluded: writeRefs does not store it as a ref, so counting
+        // it would make refsChanged exceed refCount on a first sync.
+        val changed = refs.count { it.name != "HEAD" && before[it.name] != it.objectId }
+        return MirrorOutcome.Success(
+            sizeBytes = sizeBytes(destination),
+            refCount = mirror.refNames().size,
+            bytesReceived = result.bytes,
+            refsChanged = changed,
+        )
     }
 
     /**

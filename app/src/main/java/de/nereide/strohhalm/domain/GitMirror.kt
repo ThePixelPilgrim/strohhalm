@@ -4,7 +4,17 @@ import java.io.File
 
 /** The result of one repository sync. */
 sealed interface MirrorOutcome {
-    data class Success(val sizeBytes: Long, val refCount: Int) : MirrorOutcome
+    /**
+     * [bytesReceived] is the pack the server sent, and [refsChanged] the refs
+     * whose target differs from before. Both are zero when nothing moved
+     * upstream and the fetch was skipped.
+     */
+    data class Success(
+        val sizeBytes: Long,
+        val refCount: Int,
+        val bytesReceived: Long = 0,
+        val refsChanged: Int = 0,
+    ) : MirrorOutcome
     data class Failure(val error: SyncError) : MirrorOutcome
 }
 
