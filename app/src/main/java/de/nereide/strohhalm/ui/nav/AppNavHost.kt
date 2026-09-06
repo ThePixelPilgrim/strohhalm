@@ -7,6 +7,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import de.nereide.strohhalm.ui.activity.ActivityScreen
 import de.nereide.strohhalm.ui.add.AddRepoScreen
 import de.nereide.strohhalm.ui.detail.RepoDetailScreen
 import de.nereide.strohhalm.ui.list.RepoListScreen
@@ -20,6 +21,7 @@ object Routes {
     const val ADD = "add"
     const val DETAIL = "detail/{id}"
     const val SETTINGS = "settings"
+    const val ACTIVITY = "activity"
 
     fun detail(id: Long) = "detail/$id"
 }
@@ -43,6 +45,7 @@ fun AppNavHost(
             RepoListScreen(
                 onOpenRepo = { id -> navController.navigate(Routes.detail(id)) },
                 onAddRepo = { navController.navigate(Routes.ADD) },
+                onOpenActivity = { navController.navigate(Routes.ACTIVITY) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
@@ -67,6 +70,9 @@ fun AppNavHost(
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.ACTIVITY) {
+            ActivityScreen(onBack = { navController.popBackStack() })
         }
     }
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +48,7 @@ import de.nereide.strohhalm.ui.common.syncErrorText
 fun RepoListScreen(
     onOpenRepo: (Long) -> Unit,
     onAddRepo: () -> Unit,
+    onOpenActivity: () -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: RepoListViewModel = viewModel(factory = RepoListViewModel.Factory)
 ) {
@@ -65,6 +67,9 @@ fun RepoListScreen(
                         IconButton(onClick = { viewModel.syncAll() }) {
                             Icon(Icons.Filled.Refresh, stringResource(R.string.list_sync_now))
                         }
+                    }
+                    IconButton(onClick = onOpenActivity) {
+                        Icon(Icons.Filled.History, stringResource(R.string.list_activity))
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, stringResource(R.string.list_settings))

@@ -3,7 +3,6 @@ package de.nereide.strohhalm.ui.detail
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
-import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
@@ -55,6 +54,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
+import de.nereide.strohhalm.ui.common.relative
 import de.nereide.strohhalm.domain.SyncErrorCode
 import de.nereide.strohhalm.ui.add.DiagnosticCard
 import de.nereide.strohhalm.ui.common.CalmIndeterminateBar
@@ -572,10 +572,3 @@ private fun ShareBlocked(
         }
     }
 }
-
-private fun relative(millis: Long): String =
-    DateUtils.getRelativeTimeSpanString(
-        millis,
-        System.currentTimeMillis(),
-        DateUtils.MINUTE_IN_MILLIS
-    ).toString()
