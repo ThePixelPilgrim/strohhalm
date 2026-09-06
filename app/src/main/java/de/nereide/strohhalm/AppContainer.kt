@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import de.nereide.strohhalm.data.SettingsRepository
 import de.nereide.strohhalm.data.StrohhalmDatabase
+import de.nereide.strohhalm.data.SyncEventDao
+import de.nereide.strohhalm.domain.DefaultSyncLog
 import de.nereide.strohhalm.domain.DefaultRepoRepository
 import de.nereide.strohhalm.domain.EncryptedSshKeyStore
 import de.nereide.strohhalm.domain.GitMirror
@@ -14,6 +16,7 @@ import de.nereide.strohhalm.domain.MirrorAccess
 import de.nereide.strohhalm.domain.git.ProtocolMirror
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SshKeyStore
+import de.nereide.strohhalm.domain.SyncLog
 import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveStore
@@ -33,6 +36,10 @@ interface AppContainer {
     val sshKeyStore: SshKeyStore
     val gitMirror: GitMirror
     val syncRunner: SyncRunner
+
+    /** History of sync attempts; the Activity screen reads it. */
+    val syncLog: SyncLog
+    val syncEventDao: SyncEventDao
     val archiveStore: ArchiveStore
     val archiveMaintenance: ArchiveMaintenance
 
@@ -88,6 +95,12 @@ class DefaultAppContainer(context: Context) : AppContainer {
 
     override val mirrorAccess: MirrorAccess = MirrorAccess()
 
+    override val syncEventDao: SyncEventDao by lazy {
+        StrohhalmDatabase.getInstance(appContext).syncEventDao()
+    }
+
+    override val syncLog: SyncLog by lazy { DefaultSyncLog(syncEventDao) }
+
     override val syncRunner: SyncRunner by lazy {
         SyncRunner(
             repos = repoRepository,
@@ -95,6 +108,7 @@ class DefaultAppContainer(context: Context) : AppContainer {
             scope = applicationScope,
             foreground = SyncForegroundService.hold(appContext),
             access = mirrorAccess,
+            log = syncLog,
         )
     }
 
