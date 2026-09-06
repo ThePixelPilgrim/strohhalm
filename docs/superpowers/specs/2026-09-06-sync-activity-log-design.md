@@ -125,7 +125,7 @@ above the `GitMirror` interface learns what a pack is.
 In `domain`:
 
 ```kotlin
-enum class SyncTrigger { MANUAL, SCHEDULED }
+enum class SyncTrigger { MANUAL, SCHEDULED }   // lives in `data`, beside the entity that stores it
 
 interface SyncLog {
     suspend fun record(event: SyncEvent)
