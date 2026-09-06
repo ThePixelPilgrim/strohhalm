@@ -1,6 +1,7 @@
 package de.nereide.strohhalm.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -20,11 +21,18 @@ class SyncStatusConverter {
     fun fromStatus(status: SyncStatus): String = status.name
 }
 
-@Database(entities = [Repo::class], version = 1, exportSchema = true)
-@TypeConverters(SyncStatusConverter::class)
+@Database(
+    entities = [Repo::class, SyncEvent::class],
+    version = 2,
+    exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
+)
+@TypeConverters(SyncStatusConverter::class, SyncEventConverters::class)
 abstract class StrohhalmDatabase : RoomDatabase() {
 
     abstract fun repoDao(): RepoDao
+
+    abstract fun syncEventDao(): SyncEventDao
 
     companion object {
         @Volatile
