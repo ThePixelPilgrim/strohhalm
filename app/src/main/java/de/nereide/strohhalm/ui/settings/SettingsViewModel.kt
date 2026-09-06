@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import de.nereide.strohhalm.data.SettingsRepository
+import de.nereide.strohhalm.data.SyncInterval
 import de.nereide.strohhalm.domain.ProbeReport
 import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.StorageProbe
@@ -25,12 +26,13 @@ import java.time.Instant
 data class SettingsUiState(
     val storageRoot: String? = null,
     val notifyOnFailure: Boolean = true,
+    val syncInterval: SyncInterval = SettingsRepository.DEFAULT_SYNC_INTERVAL,
 )
 
 /**
- * Deliberately does not expose the sync interval yet. The interval only has
- * meaning once a worker reads it, and a control that persists a value nothing
- * acts on is worse than an absent one. It lands with the sync worker.
+ * The interval is only stored here. [de.nereide.strohhalm.StrohhalmApp]
+ * observes the preference and re-registers the periodic work on every change,
+ * so there is exactly one place that talks to WorkManager.
  */
 class SettingsViewModel(
     private val settings: SettingsRepository,
@@ -39,9 +41,10 @@ class SettingsViewModel(
 
     val uiState: StateFlow<SettingsUiState> = combine(
         settings.storageRoot,
-        settings.notifyOnFailure
-    ) { root, notify ->
-        SettingsUiState(storageRoot = root, notifyOnFailure = notify)
+        settings.notifyOnFailure,
+        settings.syncInterval,
+    ) { root, notify, interval ->
+        SettingsUiState(storageRoot = root, notifyOnFailure = notify, syncInterval = interval)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     private val _publicKey = MutableStateFlow<String?>(null)
@@ -78,6 +81,10 @@ class SettingsViewModel(
 
     fun setNotifyOnFailure(enabled: Boolean) {
         viewModelScope.launch { settings.setNotifyOnFailure(enabled) }
+    }
+
+    fun setSyncInterval(interval: SyncInterval) {
+        viewModelScope.launch { settings.setSyncInterval(interval) }
     }
 
     fun regenerateKey() {
