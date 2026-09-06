@@ -166,7 +166,8 @@ Layout, top to bottom:
 
 - A `FilterChip` labelled "Received data only", selected by default.
 - A `LazyColumn`, newest first. Each row shows the repository name, a relative
-  time from the existing `relative()` helper, and one line of details:
+  time from the `relative()` helper (today private to `RepoDetailScreen`; it
+  moves to `ui/common` so both screens share it), and one line of details:
   - `RECEIVED`: bytes via `Formatter.formatShortFileSize`, refs changed,
     duration
   - `UP_TO_DATE`: "Up to date", duration
