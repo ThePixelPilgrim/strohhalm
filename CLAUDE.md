@@ -236,6 +236,10 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
   `startForegroundService` from a background job is refused on Android 12+ (the hold's
   `acquire` is wrapped in `runCatching`, so a refusal degrades to an un-notified sync
   that still completes if the process lives), and whether failure notifications post.
+- **The 1→2 Room auto-migration that adds `sync_events`.** Checked by Room's compile-time
+  schema diff and by `MigrationTest` in `androidTest`, which has not been run on a device.
+  Also unverified there: that the Activity screen's bytes-received figures match what
+  `git fetch` would report for the same pack.
 - **That protocol v2 activation reaches a real server.** The engine requests v2 out-of-band
   via the `GIT_PROTOCOL=version=2` SSH channel env var, exactly as git does. Hosted forges
   accept it; a self-managed OpenSSH server needs `AcceptEnv GIT_PROTOCOL` in `sshd_config`,
