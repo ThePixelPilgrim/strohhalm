@@ -1,6 +1,7 @@
 package de.nereide.strohhalm.work
 
 import de.nereide.strohhalm.data.SyncStatus
+import de.nereide.strohhalm.data.SyncTrigger
 import de.nereide.strohhalm.domain.RepoRepository
 import de.nereide.strohhalm.domain.SyncError
 import de.nereide.strohhalm.domain.SyncErrorCode
@@ -50,7 +51,7 @@ class ScheduledSync(
         if (runner.running.value) return Outcome.AlreadyRunning
 
         val startedAt = clock()
-        if (!runner.launchSyncAll()) return Outcome.NothingToSync
+        if (!runner.launchSyncAll(SyncTrigger.SCHEDULED)) return Outcome.NothingToSync
         runner.running.first { !it }
 
         // Only failures stamped during this run: a repository skipped this

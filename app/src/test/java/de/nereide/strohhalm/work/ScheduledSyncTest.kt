@@ -167,4 +167,18 @@ class ScheduledSyncTest {
         withTimeout(TimeUnit.SECONDS.toMillis(5)) { slowRunner.running.first { !it } }
         Unit
     }
+
+    @Test
+    fun `a scheduled cycle is logged as scheduled`() = runBlocking {
+        val log = de.nereide.strohhalm.domain.RecordingSyncLog()
+        val logging = SyncRunner(repos, mirror, scope, log = log)
+        repos.add("A", "ssh://git@host/srv/a.git", "SHA256:aaa")
+
+        ScheduledSync(runner = logging, repos = repos, preconditions = { null }, clock = { 1_000L }).run()
+
+        assertEquals(
+            de.nereide.strohhalm.data.SyncTrigger.SCHEDULED,
+            log.events.single().trigger,
+        )
+    }
 }
