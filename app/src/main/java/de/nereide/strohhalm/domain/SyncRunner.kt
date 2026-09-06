@@ -1,6 +1,9 @@
 package de.nereide.strohhalm.domain
 
 import de.nereide.strohhalm.data.Repo
+import de.nereide.strohhalm.data.SyncEvent
+import de.nereide.strohhalm.data.SyncEventOutcome
+import de.nereide.strohhalm.data.SyncTrigger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -44,6 +47,8 @@ class SyncRunner(
     private val scope: CoroutineScope,
     private val foreground: ForegroundHold = NoForegroundHold,
     private val access: MirrorAccess = MirrorAccess(),
+    private val log: SyncLog = NoSyncLog,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     private companion object {
@@ -73,20 +78,20 @@ class SyncRunner(
      *   state on the strength of the launch has to know: `false` means nothing
      *   is coming, and waiting for it would wait for ever.
      */
-    suspend fun launchSyncOne(id: Long): Boolean {
+    suspend fun launchSyncOne(id: Long, trigger: SyncTrigger = SyncTrigger.MANUAL): Boolean {
         val repo = repos.all().firstOrNull { it.id == id }
             ?.takeIf { it.hostKeyFingerprint != null }
             ?: return false
-        return launch { sync(repo) }
+        return launch { sync(repo, trigger) }
     }
 
     /** @return whether a sync actually started; see [launchSyncOne]. */
-    suspend fun launchSyncAll(): Boolean {
+    suspend fun launchSyncAll(trigger: SyncTrigger = SyncTrigger.MANUAL): Boolean {
         // Unverified repositories are skipped silently: contacting them would
         // only manufacture the refusal the UI already explains, once per cycle.
         val verified = repos.all().filter { it.hostKeyFingerprint != null }
         if (verified.isEmpty()) return false
-        return launch { verified.forEach { sync(it) } }
+        return launch { verified.forEach { sync(it, trigger) } }
     }
 
     private fun launch(block: suspend () -> Unit): Boolean {
@@ -142,9 +147,9 @@ class SyncRunner(
         repos.resetStaleSyncing(SyncError(SyncErrorCode.INTERRUPTED))
     }
 
-    private suspend fun sync(repo: Repo) {
+    private suspend fun sync(repo: Repo, trigger: SyncTrigger) {
         repos.markSyncing(repo.id)
-        val startedAt = System.currentTimeMillis()
+        val startedAt = clock()
 
         // Published immediately so the UI shows the repository and a running
         // clock straight away. JGit reports nothing until data flows, and for a
@@ -181,6 +186,7 @@ class SyncRunner(
             // Rethrown so the scope still unwinds as cancelled.
             withContext(NonCancellable) {
                 repos.markFailure(repo.id, SyncError(SyncErrorCode.CANCELLED))
+                record(repo, trigger, startedAt, SyncEventOutcome.CANCELLED)
             }
             throw cancelled
         } catch (t: Throwable) {
@@ -188,10 +194,49 @@ class SyncRunner(
         }
 
         when (outcome) {
-            is MirrorOutcome.Success ->
+            is MirrorOutcome.Success -> {
                 repos.markSuccess(repo.id, outcome.sizeBytes, outcome.refCount)
-            is MirrorOutcome.Failure ->
+                record(
+                    repo, trigger, startedAt,
+                    if (outcome.bytesReceived > 0) SyncEventOutcome.RECEIVED else SyncEventOutcome.UP_TO_DATE,
+                    bytesReceived = outcome.bytesReceived,
+                    refsChanged = outcome.refsChanged,
+                )
+            }
+            is MirrorOutcome.Failure -> {
                 repos.markFailure(repo.id, outcome.error)
+                record(repo, trigger, startedAt, SyncEventOutcome.FAILED, errorCode = outcome.error.code.name)
+            }
+        }
+    }
+
+    /**
+     * Bookkeeping, never a reason to fail: the row already says what
+     * happened, and a log entry lost to a full disk is the lesser fault.
+     */
+    private suspend fun record(
+        repo: Repo,
+        trigger: SyncTrigger,
+        startedAt: Long,
+        outcome: SyncEventOutcome,
+        bytesReceived: Long = 0,
+        refsChanged: Int = 0,
+        errorCode: String? = null,
+    ) {
+        runCatching {
+            log.record(
+                SyncEvent(
+                    repoId = repo.id,
+                    repoName = repo.displayName,
+                    startedAt = startedAt,
+                    finishedAt = clock(),
+                    outcome = outcome,
+                    bytesReceived = bytesReceived,
+                    refsChanged = refsChanged,
+                    errorCode = errorCode,
+                    trigger = trigger,
+                )
+            )
         }
     }
 }
