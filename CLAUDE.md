@@ -169,6 +169,15 @@ Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation,
 through `v0.1.9` (mirror engine, SSH transport, host-key pinning, live progress, foreground
 service, cancellable syncs), and `v0.2.0` (the hash-agnostic mirror engine).
 
+**Periodic sync exists as of `v0.5.0`.** Until then Task 9 was a third done:
+`SyncPreconditions` was written, but no worker was ever enqueued, so the stored
+interval was dead and only manual syncs ran. `SyncWorker` wraps `ScheduledSync`
+(the JVM-testable cycle: refuse on preconditions, stand aside if a sync is in
+flight, wait, report failures), `SyncScheduler` registers it, and `StrohhalmApp`
+observes the interval preference so Settings changes re-register without a
+restart. The worker does not call `setForeground`; `SyncRunner` already raises
+`SyncForegroundService` for every sync.
+
 **The mirror engine has been replaced.** `AppContainer` now builds a `ProtocolMirror`, a
 Kotlin implementation of git's protocol v2 over MINA SSHD that follows whatever hash the
 remote negotiates — so SHA-256 remotes work. All 15 tasks of
@@ -222,6 +231,11 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
      disk-backed (a temp `.pack` read back through two `RandomAccessFile` passes) precisely
      so this cannot blow the heap, and this is the benchmark that proves it.
   4. Cancelling a running sync stops it, including via the notification's Stop action.
+- **That WorkManager actually fires `SyncWorker` on a device.** Everything up to the
+  enqueue is unit-tested; the enqueue and the wake-up are not. Also unverified: whether
+  `startForegroundService` from a background job is refused on Android 12+ (the hold's
+  `acquire` is wrapped in `runCatching`, so a refusal degrades to an un-notified sync
+  that still completes if the process lives), and whether failure notifications post.
 - **That protocol v2 activation reaches a real server.** The engine requests v2 out-of-band
   via the `GIT_PROTOCOL=version=2` SSH channel env var, exactly as git does. Hosted forges
   accept it; a self-managed OpenSSH server needs `AcceptEnv GIT_PROTOCOL` in `sshd_config`,
