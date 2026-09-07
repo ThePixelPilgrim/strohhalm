@@ -169,6 +169,13 @@ Released so far: `v0.1.0` (pipeline test), `v0.1.1` (onboarding, key generation,
 through `v0.1.9` (mirror engine, SSH transport, host-key pinning, live progress, foreground
 service, cancellable syncs), and `v0.2.0` (the hash-agnostic mirror engine).
 
+**Background-sync health exists as of `v0.7.0`.** After a reboot the periodic job was
+held by App Standby and Doze until the app was opened; the WorkManager wiring itself was
+complete. `BatteryOptimisation` requests the exemption (onboarding step 4, and Settings),
+and `ScheduleHealth` (pure, tested) renders a verdict in Settings from WorkManager's
+`getWorkInfosForUniqueWorkFlow` plus `PowerManager.isIgnoringBatteryOptimizations`. Force
+Stop puts the app in stopped state, which nothing can override; Settings says so.
+
 **A sync activity log exists as of `v0.6.0`.** `SyncRunner` writes one `SyncEvent` per
 attempt through `SyncLog` (bytes received = pack transfer size from `PackResult.bytes`,
 refs changed, duration, trigger); `DefaultSyncLog` prunes to 30 days on each insert; the
@@ -246,6 +253,9 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
   schema diff and by `MigrationTest` in `androidTest`, which has not been run on a device.
   Also unverified there: that the Activity screen's bytes-received figures match what
   `git fetch` would report for the same pack.
+- **That the battery exemption makes the scheduled sync run after a reboot without a
+  launch.** The request dialog, the exemption read-back, and the Settings verdict have
+  not been seen on a device. Manufacturer battery managers are outside the exemption.
 - **That protocol v2 activation reaches a real server.** The engine requests v2 out-of-band
   via the `GIT_PROTOCOL=version=2` SSH channel env var, exactly as git does. Hosted forges
   accept it; a self-managed OpenSSH server needs `AcceptEnv GIT_PROTOCOL` in `sshd_config`,
