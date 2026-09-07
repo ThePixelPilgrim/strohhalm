@@ -11,6 +11,8 @@ import de.nereide.strohhalm.domain.SshKeyStore
 import de.nereide.strohhalm.domain.StorageProbe
 import de.nereide.strohhalm.ui.common.PickedFolder
 import de.nereide.strohhalm.ui.common.appContainer
+import de.nereide.strohhalm.work.ScheduleHealth
+import de.nereide.strohhalm.work.ScheduleHealthSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,7 +39,14 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val settings: SettingsRepository,
     private val keyStore: SshKeyStore,
+    private val health: ScheduleHealthSource,
 ) : ViewModel() {
+
+    /** Null until the first reading arrives; the screen shows nothing rather than a wrong verdict. */
+    val scheduleHealth: StateFlow<ScheduleHealth?> = health.observe()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun refreshHealth() = health.refresh()
 
     val uiState: StateFlow<SettingsUiState> = combine(
         settings.storageRoot,
@@ -99,7 +108,8 @@ class SettingsViewModel(
             initializer {
                 SettingsViewModel(
                     settings = this.appContainer().settingsRepository,
-                    keyStore = this.appContainer().sshKeyStore
+                    keyStore = this.appContainer().sshKeyStore,
+                    health = this.appContainer().scheduleHealth,
                 )
             }
         }

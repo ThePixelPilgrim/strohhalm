@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
+import de.nereide.strohhalm.work.BatteryOptimisation
 import de.nereide.strohhalm.ui.common.rememberStorageRootPicker
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +55,10 @@ fun OnboardingScreen(
 
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
+    ) { viewModel.refresh() }
+
+    val exemptionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
     ) { viewModel.refresh() }
 
     val pickFolder = rememberStorageRootPicker { picked -> viewModel.setStorageRoot(picked) }
@@ -132,6 +137,17 @@ fun OnboardingScreen(
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     }
+                }
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Step(
+                title = stringResource(R.string.onboarding_battery_title),
+                body = stringResource(R.string.onboarding_battery_body),
+                action = stringResource(R.string.onboarding_battery_action),
+                satisfied = uiState.batteryExempt,
+                onAction = {
+                    exemptionLauncher.launch(BatteryOptimisation.requestIntent(context))
                 }
             )
 

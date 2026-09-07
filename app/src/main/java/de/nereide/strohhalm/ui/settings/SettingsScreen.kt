@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,6 +38,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,7 +52,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.nereide.strohhalm.R
 import de.nereide.strohhalm.data.SyncInterval
+import de.nereide.strohhalm.ui.common.relative
 import de.nereide.strohhalm.ui.common.rememberStorageRootPicker
+import de.nereide.strohhalm.work.BatteryOptimisation
+import de.nereide.strohhalm.work.ScheduleHealth
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +70,15 @@ fun SettingsScreen(
     val pickFolder = rememberStorageRootPicker { picked -> viewModel.setStorageRoot(picked) }
     var confirmRegenerate by remember { mutableStateOf(false) }
     var pickInterval by remember { mutableStateOf(false) }
+    val scheduleHealth by viewModel.scheduleHealth.collectAsStateWithLifecycle()
+    val exemptionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { viewModel.refreshHealth() }
+    // The exemption is granted in a system screen; re-read it whenever we come back.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { viewModel.refreshHealth() }
+    }
 
     Scaffold(
         topBar = {
@@ -165,6 +183,51 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
+
+            scheduleHealth?.let { health ->
+                Text(
+                    stringResource(R.string.settings_health_title),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                val verdict = health.verdict(System.currentTimeMillis())
+                Text(
+                    stringResource(
+                        when (verdict) {
+                            ScheduleHealth.Verdict.MANUAL -> R.string.settings_health_manual
+                            ScheduleHealth.Verdict.NOT_REGISTERED -> R.string.settings_health_not_registered
+                            ScheduleHealth.Verdict.RESTRICTED -> R.string.settings_health_restricted
+                            ScheduleHealth.Verdict.OVERDUE -> R.string.settings_health_overdue
+                            ScheduleHealth.Verdict.HEALTHY -> R.string.settings_health_healthy
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (verdict == ScheduleHealth.Verdict.RESTRICTED || verdict == ScheduleHealth.Verdict.OVERDUE) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+                health.nextRunAt?.let { next ->
+                    Text(
+                        stringResource(R.string.settings_health_next_run, relative(next)),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    stringResource(R.string.settings_health_force_stop),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (!health.batteryExempt) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { exemptionLauncher.launch(BatteryOptimisation.requestIntent(context)) }) {
+                        Text(stringResource(R.string.settings_health_allow))
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

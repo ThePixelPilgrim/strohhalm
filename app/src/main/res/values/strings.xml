@@ -12,7 +12,7 @@
 
     <!-- Onboarding -->
     <string name="onboarding_title">Set up Strohhalm</string>
-    <string name="onboarding_intro">Strohhalm keeps offline mirror copies of your git repositories. Three things are needed before it can start.</string>
+    <string name="onboarding_intro">Strohhalm keeps offline mirror copies of your git repositories. Four things are needed before it can start.</string>
     <string name="onboarding_storage_title">1. All files access</string>
     <string name="onboarding_storage_body">Mirrors are stored as real git repositories in a folder you choose, so they survive uninstalling the app and can be copied to a computer. Android only allows that with all-files access, which has to be granted by hand in system settings.</string>
     <string name="onboarding_storage_action">Grant access</string>
@@ -22,6 +22,9 @@
     <string name="onboarding_notifications_title">3. Notifications</string>
     <string name="onboarding_notifications_body">Strohhalm stays quiet while backups succeed and only notifies you when one cannot run.</string>
     <string name="onboarding_notifications_action">Allow notifications</string>
+    <string name="onboarding_battery_title">4. Run in the background</string>
+    <string name="onboarding_battery_body">Scheduled backups run while the phone is idle. Without an exemption from battery optimisation, Android can hold them for hours after a reboot until you open the app.</string>
+    <string name="onboarding_battery_action">Allow background activity</string>
     <string name="onboarding_done">Done</string>
     <string name="onboarding_granted">Granted</string>
 
@@ -140,6 +143,15 @@
     <string name="settings_key_regenerate_title">Regenerate the key?</string>
     <string name="settings_key_regenerate_body">A new key is generated and the current one stops working immediately. Every server has to be updated with the new public key before backups resume.</string>
     <string name="settings_notify_title">Notify when a backup fails</string>
+    <string name="settings_health_title">Background sync</string>
+    <string name="settings_health_manual">Automatic sync is off. Backups run only when you start them.</string>
+    <string name="settings_health_not_registered">No scheduled sync is registered. Change the interval to register one.</string>
+    <string name="settings_health_restricted">Battery optimisation can hold scheduled backups for hours after a reboot until you open the app.</string>
+    <string name="settings_health_overdue">The last scheduled run is late. Android is deferring it; opening the app usually lets it run.</string>
+    <string name="settings_health_healthy">Scheduled sync is registered and allowed to run in the background.</string>
+    <string name="settings_health_next_run">Next run: %1$s</string>
+    <string name="settings_health_force_stop">Force Stop in system settings pauses backups until the app is opened again. Android allows no way around that.</string>
+    <string name="settings_health_allow">Allow background activity</string>
     <string name="settings_interval_title">Sync automatically</string>
     <string name="settings_interval_body">Android may delay a scheduled sync to save battery, so the interval is a minimum, not a promise.</string>
     <string name="settings_interval_manual">Manually only</string>

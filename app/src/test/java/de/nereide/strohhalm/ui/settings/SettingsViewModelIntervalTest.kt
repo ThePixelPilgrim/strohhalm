@@ -4,6 +4,10 @@ import de.nereide.strohhalm.data.SettingsRepository
 import de.nereide.strohhalm.data.SyncInterval
 import de.nereide.strohhalm.domain.FakeDataStore
 import de.nereide.strohhalm.domain.SshKeyStore
+import de.nereide.strohhalm.work.ScheduleHealth
+import de.nereide.strohhalm.work.ScheduleHealthSource
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -35,6 +39,15 @@ class SettingsViewModelIntervalTest {
         override suspend fun regenerate(): KeyPair = error("not needed")
     }
 
+    private val healthFlow = MutableStateFlow(
+        ScheduleHealth(SyncInterval.H1, registered = true, nextRunAt = null, batteryExempt = false)
+    )
+    private var refreshes = 0
+    private val health = object : ScheduleHealthSource {
+        override fun observe(): Flow<ScheduleHealth> = healthFlow
+        override fun refresh() { refreshes++ }
+    }
+
     @Before
     fun setUp() = Dispatchers.setMain(dispatcher)
 
@@ -44,7 +57,7 @@ class SettingsViewModelIntervalTest {
     @Test
     fun `the ui state carries the stored interval`() = runTest(dispatcher) {
         settings.setSyncInterval(SyncInterval.H6)
-        val viewModel = SettingsViewModel(settings, keyStore)
+        val viewModel = SettingsViewModel(settings, keyStore, health)
 
         val state = viewModel.uiState.first { it.syncInterval == SyncInterval.H6 }
 
@@ -53,11 +66,29 @@ class SettingsViewModelIntervalTest {
 
     @Test
     fun `choosing an interval persists it`() = runTest(dispatcher) {
-        val viewModel = SettingsViewModel(settings, keyStore)
+        val viewModel = SettingsViewModel(settings, keyStore, health)
 
         viewModel.setSyncInterval(SyncInterval.MANUAL)
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(SyncInterval.MANUAL, settings.syncInterval.first())
+    }
+
+    @Test
+    fun `the schedule health is whatever the source reports`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(settings, keyStore, health)
+
+        val shown = viewModel.scheduleHealth.first { it != null }
+
+        assertEquals(false, shown!!.batteryExempt)
+    }
+
+    @Test
+    fun `refreshing asks the source to re-read`() = runTest(dispatcher) {
+        val viewModel = SettingsViewModel(settings, keyStore, health)
+
+        viewModel.refreshHealth()
+
+        assertEquals(1, refreshes)
     }
 }

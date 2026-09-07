@@ -21,6 +21,8 @@ import de.nereide.strohhalm.domain.SyncRunner
 import de.nereide.strohhalm.domain.archive.ArchiveNames
 import de.nereide.strohhalm.domain.archive.ArchiveStore
 import de.nereide.strohhalm.domain.archive.CacheSpace
+import de.nereide.strohhalm.work.AndroidScheduleHealthSource
+import de.nereide.strohhalm.work.ScheduleHealthSource
 import de.nereide.strohhalm.work.SyncForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +42,9 @@ interface AppContainer {
     /** History of sync attempts; the Activity screen reads it. */
     val syncLog: SyncLog
     val syncEventDao: SyncEventDao
+
+    /** Whether the periodic sync can actually run; Settings shows it. */
+    val scheduleHealth: ScheduleHealthSource
     val archiveStore: ArchiveStore
     val archiveMaintenance: ArchiveMaintenance
 
@@ -100,6 +105,10 @@ class DefaultAppContainer(context: Context) : AppContainer {
     }
 
     override val syncLog: SyncLog by lazy { DefaultSyncLog(syncEventDao) }
+
+    override val scheduleHealth: ScheduleHealthSource by lazy {
+        AndroidScheduleHealthSource(appContext, settingsRepository)
+    }
 
     override val syncRunner: SyncRunner by lazy {
         SyncRunner(

@@ -15,6 +15,7 @@ import de.nereide.strohhalm.domain.StorageProbe
 import de.nereide.strohhalm.ui.common.PickedFolder
 import de.nereide.strohhalm.ui.common.appContainer
 import de.nereide.strohhalm.ui.common.application
+import de.nereide.strohhalm.work.BatteryOptimisation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,7 @@ data class OnboardingUiState(
     val hasStorageAccess: Boolean = false,
     val storageRoot: String? = null,
     val hasNotificationPermission: Boolean = true,
+    val batteryExempt: Boolean = true,
     val probe: ProbeReport? = null,
     val probeError: String? = null,
 ) {
@@ -57,6 +59,7 @@ class OnboardingViewModel(
                 hasStorageAccess = hasStorageAccess(),
                 storageRoot = settings.storageRoot.first(),
                 hasNotificationPermission = hasNotificationPermission(),
+                batteryExempt = BatteryOptimisation.isExempt(context),
             )
         }
     }
