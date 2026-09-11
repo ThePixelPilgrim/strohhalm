@@ -7,15 +7,16 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import de.nereide.strohhalm.R
 import de.nereide.strohhalm.StrohhalmApp
 import de.nereide.strohhalm.domain.ForegroundHold
+import de.nereide.strohhalm.domain.SyncProgress
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -25,46 +26,70 @@ import kotlinx.coroutines.launch
  * Its only job is process priority: the sync itself runs on the application
  * scope. Without it Android freezes the process when the app is backgrounded and
  * a long mirror dies mid-connection.
+ *
+ * The service ends its own notification. [ForegroundHold.release] still calls
+ * `stopService`, but the system removes a foreground notification
+ * asynchronously, and anything this service posts in the meantime survives as
+ * an orphan. So [ForegroundSession] guarantees nothing is posted once the sync
+ * has ended, and [finish] removes the notification here, synchronously with the
+ * last thing this service does with it.
  */
-class SyncForegroundService : Service() {
+class SyncForegroundService : Service(), ForegroundSession.Display {
 
-    private val scope = CoroutineScope(SupervisorJob())
-    private var notifier: SyncNotifier? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var notifier: SyncNotifier
+    private val session = ForegroundSession(this)
+    private val runner get() = (applicationContext as StrohhalmApp).container.syncRunner
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        val notifier = SyncNotifier(this).also { this.notifier = it }
+        notifier = SyncNotifier(this)
         notifier.ensureChannels()
 
+        // Required within seconds of startForegroundService, before anything
+        // else; a sync that ended in the meantime finishes on the first
+        // collected value right after.
         startForegroundCompat(notifier.progress(getString(R.string.notification_progress_starting)))
 
-        val container = (applicationContext as StrohhalmApp).container
+        // Main.immediate keeps every notification decision on one thread, in
+        // the order the runner made them, so finish() cannot interleave with a
+        // show() still in flight.
         scope.launch {
-            container.syncRunner.progress.collectLatest { progress ->
-                val text = progress?.let {
-                    if (it.total > 0) {
-                        getString(R.string.progress_of, it.task, it.completed, it.total)
-                    } else {
-                        getString(R.string.progress_indeterminate, it.task)
-                    }
-                } ?: getString(R.string.notification_progress_starting)
-                NotificationManagerCompat.from(this@SyncForegroundService)
-                    .runCatching { notify(NotificationIds.PROGRESS, notifier.progress(text)) }
-            }
+            runner.progress.collect { progress -> session.onProgress(progress) }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
-            (applicationContext as StrohhalmApp).container.syncRunner.cancel()
+            runner.cancel()
+            session.onStopRequested(running = runner.running.value)
         }
         return START_NOT_STICKY
     }
 
+    override fun show(progress: SyncProgress) {
+        val text = if (progress.total > 0) {
+            getString(R.string.progress_of, progress.task, progress.completed, progress.total)
+        } else {
+            getString(R.string.progress_indeterminate, progress.task)
+        }
+        NotificationManagerCompat.from(this)
+            .runCatching { notify(NotificationIds.PROGRESS, notifier.progress(text)) }
+    }
+
+    override fun finish() {
+        scope.cancel()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
         scope.cancel()
+        // Belt and braces for the paths that do not go through finish(): the
+        // system killing the service, or stopService arriving first.
+        NotificationManagerCompat.from(this).runCatching { cancel(NotificationIds.PROGRESS) }
         super.onDestroy()
     }
 

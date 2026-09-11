@@ -148,6 +148,16 @@ If Gradle cannot find the SDK, create `local.properties` with
   `runCatching` swallows `CancellationException` unless it is rethrown, and the row's
   final DB write must run under `NonCancellable` or it never happens.
 
+- **The sync notification must never be posted after the service starts stopping.** A
+  foreground service's notification is removed by the system *asynchronously* when the
+  service stops; a `notify()` on the same id that lands afterwards becomes an ordinary
+  notification that is `ongoing`, belongs to nobody, and stays until the next sync's
+  `startForeground` replaces it. The end of a sync clears progress and stops the service
+  back to back, which is exactly that race. `ForegroundSession` (pure, tested) enforces
+  "nothing after finish", and `SyncForegroundService` removes its own notification with
+  `stopForeground(STOP_FOREGROUND_REMOVE)` on `Dispatchers.Main.immediate`, so removal is
+  ordered after every post. Do not reintroduce a placeholder for `progress == null`.
+
 - **Kotlin block comments nest.** Writing a git refspec such as the literal
   `+refs/<star>:refs/<star>` inside a KDoc opens a nested comment that never closes, and
   the file fails with `Unclosed comment` — a confusing error pointing at the end of the
@@ -244,6 +254,9 @@ Do not re-litigate these; they were confirmed on device, not just by unit tests.
      disk-backed (a temp `.pack` read back through two `RandomAccessFile` passes) precisely
      so this cannot blow the heap, and this is the benchmark that proves it.
   4. Cancelling a running sync stops it, including via the notification's Stop action.
+- **That the sync notification disappears when a sync ends.** It used to survive as an
+  orphaned "Preparing…" on some runs (see the gotcha above). The fix is unit-tested in
+  `ForegroundSessionTest`; nobody has yet watched a notification clear on a device.
 - **That WorkManager actually fires `SyncWorker` on a device.** Everything up to the
   enqueue is unit-tested; the enqueue and the wake-up are not. Also unverified: whether
   `startForegroundService` from a background job is refused on Android 12+ (the hold's
